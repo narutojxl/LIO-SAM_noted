@@ -61,7 +61,7 @@ private:
     float odomIncreY;
     float odomIncreZ;
 
-    lio_sam::cloud_info cloudInfo;
+    lio_sam::cloud_info cloudInfo;  //cloud_info.msg
     double timeScanCur;
     double timeScanNext;
     std_msgs::Header cloudHeader;
@@ -72,14 +72,16 @@ public:
     deskewFlag(0)
     {
         subImu        = nh.subscribe<sensor_msgs::Imu>(imuTopic, 2000, &ImageProjection::imuHandler, this, ros::TransportHints().tcpNoDelay());
-        subOdom       = nh.subscribe<nav_msgs::Odometry>(odomTopic, 2000, &ImageProjection::odometryHandler, this, ros::TransportHints().tcpNoDelay());
+        subOdom       = nh.subscribe<nav_msgs::Odometry>(odomTopic, 2000, &ImageProjection::odometryHandler, this, ros::TransportHints().tcpNoDelay()); 
+        //imu在gtsam上一帧结果上每来一次imu mea预测得到的位姿，频率与imu一样！
+
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(pointCloudTopic, 5, &ImageProjection::cloudHandler, this, ros::TransportHints().tcpNoDelay());
 
         pubExtractedCloud = nh.advertise<sensor_msgs::PointCloud2> ("lio_sam/deskew/cloud_deskewed", 1);
-        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 1);
+        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 1); //给后面的特征提取模块用
 
         allocateMemory();
-        resetParameters();
+        // resetParameters();
 
         pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
     }
@@ -153,7 +155,8 @@ public:
         std::lock_guard<std::mutex> lock2(odoLock);
         odomQueue.push_back(*odometryMsg);
     }
-
+    
+    //laser回调函数
     void cloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
     {
         if (!cachePointCloud(laserCloudMsg))
@@ -170,7 +173,8 @@ public:
 
         resetParameters();
     }
-
+    
+    //缓存数据，检查laser point中是否有ring，time field
     bool cachePointCloud(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
     {
         // cache point cloud
@@ -224,7 +228,7 @@ public:
             deskewFlag = -1;
             for (int i = 0; i < currentCloudMsg.fields.size(); ++i)
             {
-                if (currentCloudMsg.fields[i].name == "time")
+                if (currentCloudMsg.fields[i].name == "time") //TODO: 确认velodyne是否有time field
                 {
                     deskewFlag = 1;
                     break;
@@ -249,6 +253,11 @@ public:
             return false;
         }
 
+        //imu queue，imu odom queue和当前帧laser，下一帧laser时间关系： 
+        // front()  curr     next  back()
+        //   |       |        |     |
+        //------------------------------> t
+
         imuDeskewInfo();
 
         odomDeskewInfo();
@@ -267,20 +276,22 @@ public:
             else
                 break;
         }
+        //imu front()跟当前帧laser时间戳很近(小于0.01 s)
 
         if (imuQueue.empty())
             return;
 
         imuPointerCur = 0;
-
+        
+        //以当前帧为原点，用[curr next]间每个imu的角速度累积得到每个imu时刻，laser的角度(imuRotX，imuRotY，imuRotZ)
         for (int i = 0; i < imuQueue.size(); ++i)
         {
             sensor_msgs::Imu thisImuMsg = imuQueue[i];
             double currentImuTime = thisImuMsg.header.stamp.toSec();
 
             // get roll, pitch, and yaw estimation for this scan
-            if (currentImuTime <= timeScanCur)
-                imuRPY2rosRPY(&thisImuMsg, &cloudInfo.imuRollInit, &cloudInfo.imuPitchInit, &cloudInfo.imuYawInit);
+            if (currentImuTime <= timeScanCur) //和当前帧挨得最近的imu信息作为当前帧的角度
+                imuRPY2rosRPY(&thisImuMsg, &cloudInfo.imuRollInit, &cloudInfo.imuPitchInit, &cloudInfo.imuYawInit); //imu测量的当前帧laser的RPY
 
             if (currentImuTime > timeScanNext + 0.01)
                 break;
@@ -303,7 +314,7 @@ public:
             imuRotX[imuPointerCur] = imuRotX[imuPointerCur-1] + angular_x * timeDiff;
             imuRotY[imuPointerCur] = imuRotY[imuPointerCur-1] + angular_y * timeDiff;
             imuRotZ[imuPointerCur] = imuRotZ[imuPointerCur-1] + angular_z * timeDiff;
-            imuTime[imuPointerCur] = currentImuTime;
+            imuTime[imuPointerCur] = currentImuTime; 
             ++imuPointerCur;
         }
 
@@ -315,6 +326,7 @@ public:
         cloudInfo.imuAvailable = true;
     }
 
+    //得到当前帧到下一帧的变换
     void odomDeskewInfo()
     {
         cloudInfo.odomAvailable = false;
@@ -332,10 +344,11 @@ public:
 
         if (odomQueue.front().header.stamp.toSec() > timeScanCur)
             return;
+        
+        //imu odom queue.front() <= 当前帧laser, 和当前帧挨得很近(0.01s 之内)
 
         // get start odometry at the beinning of the scan
-        nav_msgs::Odometry startOdomMsg;
-
+        nav_msgs::Odometry startOdomMsg; //找到时间戳>=当前帧laser, 且和当前帧laser挨得最近的imu odom
         for (int i = 0; i < odomQueue.size(); ++i)
         {
             startOdomMsg = odomQueue[i];
@@ -346,14 +359,14 @@ public:
                 break;
         }
 
-        tf::Quaternion orientation;
+        tf::Quaternion orientation; 
         tf::quaternionMsgToTF(startOdomMsg.pose.pose.orientation, orientation);
 
         double roll, pitch, yaw;
         tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
 
         // Initial guess used in mapOptimization
-        cloudInfo.initialGuessX = startOdomMsg.pose.pose.position.x;
+        cloudInfo.initialGuessX = startOdomMsg.pose.pose.position.x; //当前帧laser在map下pose
         cloudInfo.initialGuessY = startOdomMsg.pose.pose.position.y;
         cloudInfo.initialGuessZ = startOdomMsg.pose.pose.position.z;
         cloudInfo.initialGuessRoll  = roll;
@@ -369,7 +382,7 @@ public:
         if (odomQueue.back().header.stamp.toSec() < timeScanNext)
             return;
 
-        nav_msgs::Odometry endOdomMsg;
+        nav_msgs::Odometry endOdomMsg; //找到时间戳>=下一帧laser, 且和下一帧laser挨得最近的imu odom, 即下一帧laser在map下pose
 
         for (int i = 0; i < odomQueue.size(); ++i)
         {
@@ -390,12 +403,14 @@ public:
         tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
         Eigen::Affine3f transEnd = pcl::getTransformation(endOdomMsg.pose.pose.position.x, endOdomMsg.pose.pose.position.y, endOdomMsg.pose.pose.position.z, roll, pitch, yaw);
 
-        Eigen::Affine3f transBt = transBegin.inverse() * transEnd;
+        Eigen::Affine3f transBt = transBegin.inverse() * transEnd; //当前帧laser到下一帧laser的变换
 
         float rollIncre, pitchIncre, yawIncre;
         pcl::getTranslationAndEulerAngles(transBt, odomIncreX, odomIncreY, odomIncreZ, rollIncre, pitchIncre, yawIncre);
+        //Extract x,y,z and the Euler angles (XYZ-convention) from the given transformation
 
         odomDeskewFlag = true;
+        //cloudInfo.odomAvailable = true; //TODO作者忘了置回true?
     }
 
     void findRotation(double pointTime, float *rotXCur, float *rotYCur, float *rotZCur)
@@ -415,7 +430,9 @@ public:
             *rotXCur = imuRotX[imuPointerFront];
             *rotYCur = imuRotY[imuPointerFront];
             *rotZCur = imuRotZ[imuPointerFront];
-        } else {
+        } else {// pointTime <= imuTime[imuPointerFront]   
+                // 时间戳关系：    imuPointerBack    pointTime    imuPointerFront
+                //             ---------|--------------|-----------------|----------> t
             int imuPointerBack = imuPointerFront - 1;
             double ratioFront = (pointTime - imuTime[imuPointerBack]) / (imuTime[imuPointerFront] - imuTime[imuPointerBack]);
             double ratioBack = (imuTime[imuPointerFront] - pointTime) / (imuTime[imuPointerFront] - imuTime[imuPointerBack]);
@@ -443,28 +460,29 @@ public:
 
     PointType deskewPoint(PointType *point, double relTime)
     {
-        if (deskewFlag == -1 || cloudInfo.imuAvailable == false)
+        if (deskewFlag == -1 || cloudInfo.imuAvailable == false) //laser数据中如果没有time field，不会对每个点去畸变
             return *point;
 
         double pointTime = timeScanCur + relTime;
 
         float rotXCur, rotYCur, rotZCur;
-        findRotation(pointTime, &rotXCur, &rotYCur, &rotZCur);
+        findRotation(pointTime, &rotXCur, &rotYCur, &rotZCur); //得到从本帧start点到当前点的旋转
 
         float posXCur, posYCur, posZCur;
-        findPosition(relTime, &posXCur, &posYCur, &posZCur);
+        findPosition(relTime, &posXCur, &posYCur, &posZCur); //恒为0 0 0
 
         if (firstPointFlag == true)
         {
             transStartInverse = (pcl::getTransformation(posXCur, posYCur, posZCur, rotXCur, rotYCur, rotZCur)).inverse();
+            //Create a transformation from the given translation and Euler angles (XYZ-convention)
             firstPointFlag = false;
         }
 
         // transform points to start
         Eigen::Affine3f transFinal = pcl::getTransformation(posXCur, posYCur, posZCur, rotXCur, rotYCur, rotZCur);
-        Eigen::Affine3f transBt = transStartInverse * transFinal;
+        Eigen::Affine3f transBt = transStartInverse * transFinal; //从本帧start点到当前点的变换
 
-        PointType newPoint;
+        PointType newPoint; //转换到本帧start下
         newPoint.x = transBt(0,0) * point->x + transBt(0,1) * point->y + transBt(0,2) * point->z + transBt(0,3);
         newPoint.y = transBt(1,0) * point->x + transBt(1,1) * point->y + transBt(1,2) * point->z + transBt(1,3);
         newPoint.z = transBt(2,0) * point->x + transBt(2,1) * point->y + transBt(2,2) * point->z + transBt(2,3);
@@ -489,7 +507,7 @@ public:
             if (rowIdn < 0 || rowIdn >= N_SCAN)
                 continue;
 
-            float horizonAngle = atan2(thisPoint.x, thisPoint.y) * 180 / M_PI;
+            float horizonAngle = atan2(thisPoint.x, thisPoint.y) * 180 / M_PI; //velodyne是顺时针旋转
 
             float ang_res_x = 360.0/float(Horizon_SCAN);
             int columnIdn = -round((horizonAngle-90.0)/ang_res_x) + Horizon_SCAN/2;
@@ -515,10 +533,11 @@ public:
 
             rangeMat.at<float>(rowIdn, columnIdn) = range;
 
-            thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time);
+            thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time); 
+                                          //TODOlaserCloudIn->points[i].time：每个point与本帧laser时间戳的差？
 
             int index = columnIdn  + rowIdn * Horizon_SCAN;
-            fullCloud->points[index] = thisPoint;
+            fullCloud->points[index] = thisPoint; //转换到本帧start下
         }
     }
 

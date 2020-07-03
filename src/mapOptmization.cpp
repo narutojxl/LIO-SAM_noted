@@ -119,7 +119,7 @@ public:
     ros::Time timeLaserInfoStamp;
     double timeLaserCloudInfoLast;
 
-    float transformTobeMapped[6];
+    float transformTobeMapped[6]; //rpy
 
     std::mutex mtx;
 
@@ -1439,6 +1439,9 @@ int main(int argc, char** argv)
     std::thread visualizeMapThread(&mapOptimization::visualizeGlobalMapThread, &MO);
 
     ros::spin();
+
+    loopthread.join();
+    visualizeMapThread.join();
 
     return 0;
 }
