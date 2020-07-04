@@ -11,12 +11,12 @@ int64 imuAvailable
 int64 odomAvailable
 
 # Attitude for LOAM initialization
-float32 imuRollInit   #imu测量的当前帧laser的RPY
+float32 imuRollInit   #imu测量的当前帧laser的RPY，imageProjection.cpp赋值
 float32 imuPitchInit
 float32 imuYawInit
 
 # Initial guess from imu pre-integration
-float32 initialGuessX  #当前帧laser在map下pose
+float32 initialGuessX  #每一帧laser在map下pose, imuPreintegration模块发布。imageProjection.cpp赋值
 float32 initialGuessY
 float32 initialGuessZ
 float32 initialGuessRoll
@@ -27,6 +27,6 @@ float32 initialGuessYaw
 int64 imuPreintegrationResetId
 
 # Point cloud messages
-sensor_msgs/PointCloud2 cloud_deskewed  # original cloud deskewed, 全部都转换到了本帧的start下
-sensor_msgs/PointCloud2 cloud_corner    # extracted corner feature
-sensor_msgs/PointCloud2 cloud_surface   # extracted surface feature
+sensor_msgs/PointCloud2 cloud_deskewed  # original cloud deskewed, 全部都转换到了本帧的start下， featureExtraction.cpp赋值
+sensor_msgs/PointCloud2 cloud_corner    # extracted corner feature  #featureExtraction.cpp赋值
+sensor_msgs/PointCloud2 cloud_surface   # extracted surface feature #featureExtraction.cpp赋值

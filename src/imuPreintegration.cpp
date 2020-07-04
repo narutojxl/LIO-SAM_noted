@@ -77,10 +77,11 @@ public:
     IMUPreintegration()
     {
         subImu      = nh.subscribe<sensor_msgs::Imu>  (imuTopic,                   2000, &IMUPreintegration::imuHandler,      this, ros::TransportHints().tcpNoDelay());
-        subOdometry = nh.subscribe<nav_msgs::Odometry>("lio_sam/mapping/odometry", 5,    &IMUPreintegration::odometryHandler, this, ros::TransportHints().tcpNoDelay()); //后端发布的
+        subOdometry = nh.subscribe<nav_msgs::Odometry>("lio_sam/mapping/odometry", 5,    &IMUPreintegration::odometryHandler, this, ros::TransportHints().tcpNoDelay()); 
+        //后端发布的每一关键帧的回调函数
 
-        pubImuOdometry = nh.advertise<nav_msgs::Odometry> (odomTopic, 2000);
-        pubImuPath     = nh.advertise<nav_msgs::Path>     ("lio_sam/imu/path", 1);
+        pubImuOdometry = nh.advertise<nav_msgs::Odometry> (odomTopic, 2000); //imu在gtsam上一键帧结果上,每来一次imu mea预测得到的位姿，频率与imu一样！
+        pubImuPath     = nh.advertise<nav_msgs::Path>     ("lio_sam/imu/path", 1); //上面pose的所有轨迹
 
         map_to_odom    = tf::Transform(tf::createQuaternionFromRPY(0, 0, 0), tf::Vector3(0, 0, 0));
 
@@ -121,6 +122,8 @@ public:
         systemInitialized = false;
     }
 
+
+    //后端发布的每一关键帧的回调函数
     void odometryHandler(const nav_msgs::Odometry::ConstPtr& odomMsg)
     {
         double currentCorrectionTime = ROS_TIME(odomMsg);
@@ -136,11 +139,11 @@ public:
         float r_y = odomMsg->pose.pose.orientation.y;
         float r_z = odomMsg->pose.pose.orientation.z;
         float r_w = odomMsg->pose.pose.orientation.w;
-        int currentResetId = round(odomMsg->pose.covariance[0]);
+        int currentResetId = round(odomMsg->pose.covariance[0]); //后端每发生一次闭环，增加1
         gtsam::Pose3 lidarPose = gtsam::Pose3(gtsam::Rot3::Quaternion(r_w, r_x, r_y, r_z), gtsam::Point3(p_x, p_y, p_z));
 
         // correction pose jumped, reset imu pre-integration
-        if (currentResetId != imuPreintegrationResetId)
+        if (currentResetId != imuPreintegrationResetId) //1：后端每发生一次闭环就reset factor graph 
         {
             resetParams();
             imuPreintegrationResetId = currentResetId;
@@ -150,7 +153,7 @@ public:
         // 0. initialize system
         if (systemInitialized == false)//第一帧laser为世界坐标系原点W
         {
-            resetOptimization();
+            resetOptimization(); //reset factor graph
 
             // pop old IMU message
             while (!imuQueOpt.empty())//弹出imuQueOpt中在第一帧laser时间点以前的meas
@@ -198,28 +201,34 @@ public:
         }
 
 
-        // reset graph for speed
+        // reset graph for speed   //2：每100次关键帧reset factor graph 
         if (key == 100)
         {
             // get updated noise before reset
             gtsam::noiseModel::Gaussian::shared_ptr updatedPoseNoise = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(X(key-1)));
             gtsam::noiseModel::Gaussian::shared_ptr updatedVelNoise  = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(V(key-1)));
             gtsam::noiseModel::Gaussian::shared_ptr updatedBiasNoise = gtsam::noiseModel::Gaussian::Covariance(optimizer.marginalCovariance(B(key-1)));
+
             // reset graph
             resetOptimization();
+            
             // add pose
             gtsam::PriorFactor<gtsam::Pose3> priorPose(X(0), prevPose_, updatedPoseNoise);
             graphFactors.add(priorPose);
+
             // add velocity
             gtsam::PriorFactor<gtsam::Vector3> priorVel(V(0), prevVel_, updatedVelNoise);
             graphFactors.add(priorVel);
+
             // add bias
             gtsam::PriorFactor<gtsam::imuBias::ConstantBias> priorBias(B(0), prevBias_, updatedBiasNoise);
             graphFactors.add(priorBias);
+
             // add values
             graphValues.insert(X(0), prevPose_);
             graphValues.insert(V(0), prevVel_);
             graphValues.insert(B(0), prevBias_);
+
             // optimize once
             optimizer.update(graphFactors, graphValues);
             graphFactors.resize(0);
@@ -352,8 +361,12 @@ public:
     {
         sensor_msgs::Imu thisImu = imuConverter(*imu_raw);//转到laser下的a，w，q
 
-        // publish static tf 感觉没有必要用imu这么高的频率发布一个static TF
-        tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, thisImu.header.stamp, "map", "odom")); //恒为(I, 0)
+        // publish static tf  
+        //感觉没有必要用imu这么高的频率发布一个static TF, 作者的map和odom是同一个坐标系，我们给它屏蔽掉.
+        // 如果在launch文件中发布map--->odom,发布的频率低时，rviz中不显示地图
+        //（推荐）办法1： rviz直接以odom为世界坐标系显示，所有的点云默认是在odom坐标系下的
+        //办法2： launch文件中发的频率提高
+        // tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, thisImu.header.stamp, "map", "odom")); //恒为(I, 0)
 
         imuQueOpt.push_back(thisImu); //压入双端队列后面
         imuQueImu.push_back(thisImu);

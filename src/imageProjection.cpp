@@ -73,7 +73,7 @@ public:
     {
         subImu        = nh.subscribe<sensor_msgs::Imu>(imuTopic, 2000, &ImageProjection::imuHandler, this, ros::TransportHints().tcpNoDelay());
         subOdom       = nh.subscribe<nav_msgs::Odometry>(odomTopic, 2000, &ImageProjection::odometryHandler, this, ros::TransportHints().tcpNoDelay()); 
-        //imu在gtsam上一帧结果上每来一次imu mea预测得到的位姿，频率与imu一样！
+        //imuPreintegration模块发布：imu在gtsam上一帧结果上每来一次imu mea预测得到的位姿，频率与imu一样！
 
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(pointCloudTopic, 5, &ImageProjection::cloudHandler, this, ros::TransportHints().tcpNoDelay());
 
@@ -153,10 +153,11 @@ public:
     void odometryHandler(const nav_msgs::Odometry::ConstPtr& odometryMsg)
     {
         std::lock_guard<std::mutex> lock2(odoLock);
-        odomQueue.push_back(*odometryMsg);
+        odomQueue.push_back(*odometryMsg); 
+        //imuPreintegration模块发布：在gtsam得到的上一帧PVQBaBg基础上，每来一次imu做一次预测。这样每个imu mea都会有一个位姿，该topic频率和imu的频率一致！
     }
     
-    //laser回调函数
+    //每一帧laser回调函数
     void cloudHandler(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
     {
         if (!cachePointCloud(laserCloudMsg))
@@ -290,7 +291,7 @@ public:
             double currentImuTime = thisImuMsg.header.stamp.toSec();
 
             // get roll, pitch, and yaw estimation for this scan
-            if (currentImuTime <= timeScanCur) //和当前帧挨得最近的imu信息作为当前帧的角度
+            if (currentImuTime <= timeScanCur) //和当前帧挨地最近的imu信息作为当前帧的角度
                 imuRPY2rosRPY(&thisImuMsg, &cloudInfo.imuRollInit, &cloudInfo.imuPitchInit, &cloudInfo.imuYawInit); //imu测量的当前帧laser的RPY
 
             if (currentImuTime > timeScanNext + 0.01)
@@ -410,7 +411,6 @@ public:
         //Extract x,y,z and the Euler angles (XYZ-convention) from the given transformation
 
         odomDeskewFlag = true;
-        //cloudInfo.odomAvailable = true; //TODO作者忘了置回true?
     }
 
     void findRotation(double pointTime, float *rotXCur, float *rotYCur, float *rotZCur)
@@ -534,7 +534,7 @@ public:
             rangeMat.at<float>(rowIdn, columnIdn) = range;
 
             thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time); 
-                                          //TODOlaserCloudIn->points[i].time：每个point与本帧laser时间戳的差？
+                                          //TODOlaserCloudIn->points[i].time：每个point与本帧laser时间戳的差
 
             int index = columnIdn  + rowIdn * Horizon_SCAN;
             fullCloud->points[index] = thisPoint; //转换到本帧start下

@@ -219,7 +219,7 @@ public:
 
         // rotate roll pitch yaw
         Eigen::Quaterniond q_from(imu_in.orientation.w, imu_in.orientation.x, imu_in.orientation.y, imu_in.orientation.z);
-        Eigen::Quaterniond q_final = q_from * extQRPY; //TODO这个角度是谁在谁下的角度
+        Eigen::Quaterniond q_final = q_from * extQRPY; //laser在b0(imu world frame)下的角度, 见https://github.com/TixiaoShan/LIO-SAM/issues/6
         imu_out.orientation.x = q_final.x();
         imu_out.orientation.y = q_final.y();
         imu_out.orientation.z = q_final.z();
@@ -272,7 +272,9 @@ void imuRPY2rosRPY(sensor_msgs::Imu *thisImuMsg, T *rosRoll, T *rosPitch, T *ros
     double imuRoll, imuPitch, imuYaw;
     tf::Quaternion orientation;
     tf::quaternionMsgToTF(thisImuMsg->orientation, orientation);
-    tf::Matrix3x3(orientation).getRPY(imuRoll, imuPitch, imuYaw);
+    tf::Matrix3x3(orientation).getRPY(imuRoll, imuPitch, imuYaw); 
+    //Get the matrix represented as roll pitch and yaw about fixed axes XYZ
+    //得到的旋转矩阵是 R=Z(yaw) * Y(pitch) * X(roll)
 
     *rosRoll = imuRoll;
     *rosPitch = imuPitch;

@@ -119,7 +119,7 @@ public:
     ros::Time timeLaserInfoStamp;
     double timeLaserCloudInfoLast;
 
-    float transformTobeMapped[6]; //rpy
+    float transformTobeMapped[6]; //roll pitch yaw x y z, R = rz(yaw) * ry(pitch) * rx(roll)
 
     std::mutex mtx;
 
@@ -149,20 +149,20 @@ public:
         parameters.relinearizeSkip = 1;
         isam = new ISAM2(parameters);
 
-        pubKeyPoses = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/trajectory", 1);
-        pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_global", 1);
-        pubOdomAftMappedROS = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1);
-        pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1);
+        pubKeyPoses = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/trajectory", 1); //关键帧在map下的轨迹(位置position)
+        pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_global", 1); //全局地图
+        pubOdomAftMappedROS = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1); //帧在map下的位姿, 5hz
+        pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1); //帧在map下的轨迹(pose)
 
         subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 1, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
         subGPS = nh.subscribe<nav_msgs::Odometry> (gpsTopic, 200, &mapOptimization::gpsHandler, this, ros::TransportHints().tcpNoDelay());
 
-        pubHistoryKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_history_cloud", 1);
-        pubIcpKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_corrected_cloud", 1);
+        pubHistoryKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_history_cloud", 1); //有潜力发生闭环的history map
+        pubIcpKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_corrected_cloud", 1);  //闭环匹配后的点云
 
-        pubRecentKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_local", 1);
-        pubRecentKeyFrame = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered", 1);
-        pubCloudRegisteredRaw = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered_raw", 1);
+        pubRecentKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_local", 1); //当前帧往前10s内的keyframes的surf points，转换到map下组成local map
+        pubRecentKeyFrame = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered", 1); //帧转化到map中 (registered key frame)
+        pubCloudRegisteredRaw = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/cloud_registered_raw", 1); //帧转换到map中（registered high-res raw cloud）
 
         downSizeFilterCorner.setLeafSize(mappingCornerLeafSize, mappingCornerLeafSize, mappingCornerLeafSize);
         downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
@@ -235,7 +235,7 @@ public:
 
             updateInitialGuess();
 
-            extractSurroundingKeyFrames();
+            extractSurroundingKeyFrames(); //建立local map
 
             downsampleCurrentScan();
 
@@ -245,7 +245,7 @@ public:
 
             correctPoses();
 
-            publishOdometry();
+            publishOdometry(); //帧在map下的位姿
 
             publishFrames();
         }
@@ -296,6 +296,9 @@ public:
     {
         return gtsam::Pose3(gtsam::Rot3::RzRyRx(transformIn[0], transformIn[1], transformIn[2]), 
                                   gtsam::Point3(transformIn[3], transformIn[4], transformIn[5]));
+        //static Rot3 RzRyRx(double x, double y, double z) = Rz(z) * Ry(y) * Rx(x) 已确定
+        //https://github.com/borglab/gtsam/blob/f948fe34422793630bd5c5c1214c6dc7ec5cbf68/gtsam/geometry/Rot3M.cpp#L85
+        //和 https://en.wikipedia.org/wiki/Euler_angles  ”Tait–Bryan angles“ Z1-Y2-X3 相等
     }
 
     Eigen::Affine3f pclPointToAffine3f(PointTypePose thisPoint)
@@ -535,6 +538,7 @@ public:
         downSizeFilterICP.setInputCloud(nearHistoryKeyFrameCloud);
         downSizeFilterICP.filter(*cloud_temp);
         *nearHistoryKeyFrameCloud = *cloud_temp;
+
         // publish history near key frames
         publishCloud(&pubHistoryKeyFrames, nearHistoryKeyFrameCloud, timeLaserInfoStamp, "odom");
 
@@ -576,13 +580,15 @@ public:
         gtSAMgraph.add(BetweenFactor<Pose3>(latestFrameIDLoopCloure, closestHistoryFrameID, poseFrom.between(poseTo), constraintNoise));
         isam->update(gtSAMgraph);
         isam->update();
-        isam->update();
-        isam->update();
-        isam->update();
-        isam->update();
+        // isam->update();
+        // isam->update();
+        // isam->update();
+        // isam->update();
         gtSAMgraph.resize(0);
 
         aLoopIsClosed = true;
+
+        // ROS_WARN("True loop occured !");
     }
 
 
@@ -600,7 +606,7 @@ public:
         // initialization
         if (cloudKeyPoses3D->points.empty())
         {
-            transformTobeMapped[0] = cloudInfo.imuRollInit;
+            transformTobeMapped[0] = cloudInfo.imuRollInit; //imageProjection.cpp中294行, 第一帧laser在b0(imu world frame)下的角度
             transformTobeMapped[1] = cloudInfo.imuPitchInit;
             transformTobeMapped[2] = cloudInfo.imuYawInit;
 
@@ -614,7 +620,7 @@ public:
         // use imu pre-integration estimation for pose guess
         if (cloudInfo.odomAvailable == true && cloudInfo.imuPreintegrationResetId == imuPreintegrationResetId)
         { 
-            transformTobeMapped[0] = cloudInfo.initialGuessRoll;
+            transformTobeMapped[0] = cloudInfo.initialGuessRoll; //每一帧laser在map下pose, imuPreintegration模块发布。
             transformTobeMapped[1] = cloudInfo.initialGuessPitch;
             transformTobeMapped[2] = cloudInfo.initialGuessYaw;
 
@@ -625,10 +631,13 @@ public:
             lastImuTransformation = pcl::getTransformation(0, 0, 0, cloudInfo.imuRollInit, cloudInfo.imuPitchInit, cloudInfo.imuYawInit); // save imu before return;
             return;
         }
-
+        
+        
         // use imu incremental estimation for pose guess (only rotation)
-        if (cloudInfo.imuAvailable == true)
-        {
+        if (cloudInfo.imuAvailable == true) 
+        {   //TODO  cloudInfo.odomAvailable 一会为true, 一会为false, https://github.com/TixiaoShan/LIO-SAM/issues/7
+            ROS_WARN("odom = %d, cloud = %d, self = %d ", cloudInfo.odomAvailable, cloudInfo.imuPreintegrationResetId , imuPreintegrationResetId);
+
             Eigen::Affine3f transBack = pcl::getTransformation(0, 0, 0, cloudInfo.imuRollInit, cloudInfo.imuPitchInit, cloudInfo.imuYawInit);
             Eigen::Affine3f transIncre = lastImuTransformation.inverse() * transBack;
 
@@ -648,8 +657,8 @@ public:
         int numPoses = cloudKeyPoses3D->size();
         for (int i = numPoses-1; i >= 0; --i)
         {
-            if (cloudToExtract->size() <= surroundingKeyframeSize)
-                cloudToExtract->push_back(cloudKeyPoses3D->points[i]);
+            if (cloudToExtract->size() <= surroundingKeyframeSize) //25
+                cloudToExtract->push_back(cloudKeyPoses3D->points[i]); //当前往前25帧
             else
                 break;
         }
@@ -680,7 +689,7 @@ public:
         int numPoses = cloudKeyPoses3D->size();
         for (int i = numPoses-1; i >= 0; --i)
         {
-            if (timeLaserCloudInfoLast - cloudKeyPoses6D->points[i].time < 10.0)
+            if (timeLaserCloudInfoLast - cloudKeyPoses6D->points[i].time < 10.0) //当前帧往前10s内的frames，转换到map下组成local map
                 surroundingKeyPosesDS->push_back(cloudKeyPoses3D->points[i]);
             else
                 break;
@@ -703,7 +712,7 @@ public:
         {
             if (pointDistance(cloudToExtract->points[i], cloudKeyPoses3D->back()) > surroundingKeyframeSearchRadius)
                 continue;
-            int thisKeyInd = (int)cloudToExtract->points[i].intensity;
+            int thisKeyInd = (int)cloudToExtract->points[i].intensity; //帧号
             laserCloudCornerSurroundingVec[i]  = *transformPointCloud(cornerCloudKeyFrames[thisKeyInd],  &cloudKeyPoses6D->points[thisKeyInd]);
             laserCloudSurfSurroundingVec[i]    = *transformPointCloud(surfCloudKeyFrames[thisKeyInd],    &cloudKeyPoses6D->points[thisKeyInd]);
         }
@@ -721,6 +730,7 @@ public:
         downSizeFilterCorner.setInputCloud(laserCloudCornerFromMap);
         downSizeFilterCorner.filter(*laserCloudCornerFromMapDS);
         laserCloudCornerFromMapDSNum = laserCloudCornerFromMapDS->size();
+
         // Downsample the surrounding surf key frames (or map)
         downSizeFilterSurf.setInputCloud(laserCloudSurfFromMap);
         downSizeFilterSurf.filter(*laserCloudSurfFromMapDS);
@@ -744,12 +754,12 @@ public:
     {
         // Downsample cloud from current scan
         laserCloudCornerLastDS->clear();
-        downSizeFilterCorner.setInputCloud(laserCloudCornerLast);
+        downSizeFilterCorner.setInputCloud(laserCloudCornerLast); //curr less corner points
         downSizeFilterCorner.filter(*laserCloudCornerLastDS);
         laserCloudCornerLastDSNum = laserCloudCornerLastDS->size();
 
         laserCloudSurfLastDS->clear();
-        downSizeFilterSurf.setInputCloud(laserCloudSurfLast);
+        downSizeFilterSurf.setInputCloud(laserCloudSurfLast); //curr less surf points
         downSizeFilterSurf.filter(*laserCloudSurfLastDS);
         laserCloudSurfLastDSNum = laserCloudSurfLastDS->size();
     }
@@ -955,7 +965,7 @@ public:
         // yaw = pitch          ---     yaw = roll
 
         // lidar -> camera
-        float srx = sin(transformTobeMapped[1]);
+        float srx = sin(transformTobeMapped[1]); //这的x,y,z是zhang ji下的坐标系
         float crx = cos(transformTobeMapped[1]);
         float sry = sin(transformTobeMapped[2]);
         float cry = cos(transformTobeMapped[2]);
@@ -963,7 +973,7 @@ public:
         float crz = cos(transformTobeMapped[0]);
 
         int laserCloudSelNum = laserCloudOri->size();
-        if (laserCloudSelNum < 50) {
+        if (laserCloudSelNum < 50) { //少于 50个残差项，直接返回false
             return false;
         }
 
@@ -979,11 +989,11 @@ public:
 
         for (int i = 0; i < laserCloudSelNum; i++) {
             // lidar -> camera
-            pointOri.x = laserCloudOri->points[i].y;
+            pointOri.x = laserCloudOri->points[i].y; //map下的yzx对应zhangji下的xyz
             pointOri.y = laserCloudOri->points[i].z;
             pointOri.z = laserCloudOri->points[i].x;
             // lidar -> camera
-            coeff.x = coeffSel->points[i].y;
+            coeff.x = coeffSel->points[i].y; //map下的yzx对应zhangji下的xyz
             coeff.y = coeffSel->points[i].z;
             coeff.z = coeffSel->points[i].x;
             coeff.intensity = coeffSel->points[i].intensity;
@@ -1015,8 +1025,8 @@ public:
         matAtB = matAt * matB;
         cv::solve(matAtA, matAtB, matX, cv::DECOMP_QR);
 
-        if (iterCount == 0) {
-
+        // if (iterCount == 0) {
+        if (1) {
             cv::Mat matE(1, 6, CV_32F, cv::Scalar::all(0));
             cv::Mat matV(6, 6, CV_32F, cv::Scalar::all(0));
             cv::Mat matV2(6, 6, CV_32F, cv::Scalar::all(0));
@@ -1044,13 +1054,13 @@ public:
             matX.copyTo(matX2);
             matX = matP * matX2;
         }
-
-        transformTobeMapped[0] += matX.at<float>(0, 0);
-        transformTobeMapped[1] += matX.at<float>(1, 0);
-        transformTobeMapped[2] += matX.at<float>(2, 0);
-        transformTobeMapped[3] += matX.at<float>(3, 0);
-        transformTobeMapped[4] += matX.at<float>(4, 0);
-        transformTobeMapped[5] += matX.at<float>(5, 0);
+        
+        transformTobeMapped[0] += matX.at<float>(0, 0); 
+        transformTobeMapped[1] += matX.at<float>(1, 0); 
+        transformTobeMapped[2] += matX.at<float>(2, 0); 
+        transformTobeMapped[3] += matX.at<float>(3, 0); 
+        transformTobeMapped[4] += matX.at<float>(4, 0); 
+        transformTobeMapped[5] += matX.at<float>(5, 0); 
 
         float deltaR = sqrt(
                             pow(pcl::rad2deg(matX.at<float>(0, 0)), 2) +
@@ -1072,9 +1082,9 @@ public:
         if (cloudKeyPoses3D->points.empty())
             return;
 
-        if (laserCloudCornerLastDSNum > edgeFeatureMinValidNum && laserCloudSurfLastDSNum > surfFeatureMinValidNum)
+        if (laserCloudCornerLastDSNum > edgeFeatureMinValidNum && laserCloudSurfLastDSNum > surfFeatureMinValidNum)// >10 && >100
         {
-            kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMapDS);
+            kdtreeCornerFromMap->setInputCloud(laserCloudCornerFromMapDS); //local map
             kdtreeSurfFromMap->setInputCloud(laserCloudSurfFromMapDS);
 
             for (int iterCount = 0; iterCount < 30; iterCount++)
@@ -1082,16 +1092,16 @@ public:
                 laserCloudOri->clear();
                 coeffSel->clear();
 
-                cornerOptimization();
-                surfOptimization();
+                cornerOptimization(); //和lego_loam一样
+                surfOptimization(); //和lego_loam一样
 
                 combineOptimizationCoeffs();
 
-                if (LMOptimization(iterCount) == true)
+                if (LMOptimization(iterCount) == true) //和lego_loam一样
                     break;              
             }
 
-            transformUpdate();
+            transformUpdate(); //和lego_loam类似，对计算的roll,pitch进行修正，不同的是修正的权重不同
         } else {
             ROS_WARN("Not enough features! Only %d edge and %d planar features available.", laserCloudCornerLastDSNum, laserCloudSurfLastDSNum);
         }
@@ -1101,7 +1111,7 @@ public:
     {
         if (cloudInfo.imuAvailable == true)
         {
-            if (std::abs(cloudInfo.imuPitchInit) < 1.4)
+            if (std::abs(cloudInfo.imuPitchInit) < 1.4) //万向锁阈值
             {
                 double imuWeight = 0.05;
                 tf::Quaternion imuQuaternion;
@@ -1243,7 +1253,7 @@ public:
 
     void saveKeyFramesAndFactor()
     {
-        if (saveFrame() == false)
+        if (saveFrame() == false) //是否保留该帧为关键帧
             return;
 
         // odom factor
@@ -1262,11 +1272,11 @@ public:
         // update multiple-times till converge
         if (aLoopIsClosed == true)
         {
-            isam->update();
-            isam->update();
-            isam->update();
-            isam->update();
-            isam->update();
+            // isam->update(); //更新多次有助于快速收敛，但可能会有其他问题。见https://github.com/TixiaoShan/LIO-SAM/issues/5
+            // isam->update();
+            // isam->update();
+            // isam->update();
+            // isam->update();
         }
         
         gtSAMgraph.resize(0);
@@ -1353,8 +1363,9 @@ public:
             }
 
             aLoopIsClosed = false;
+
             // ID for reseting IMU pre-integration
-            ++imuPreintegrationResetId;
+            ++imuPreintegrationResetId; //每发生一次闭环，增加1
         }
     }
 
@@ -1362,7 +1373,7 @@ public:
     {
         geometry_msgs::PoseStamped pose_stamped;
         pose_stamped.header.stamp = timeLaserInfoStamp;
-        pose_stamped.header.frame_id = "odom";
+        pose_stamped.header.frame_id = "odom"; //map
         pose_stamped.pose.position.x = pose_in.x;
         pose_stamped.pose.position.y = pose_in.y;
         pose_stamped.pose.position.z = pose_in.z;
@@ -1386,8 +1397,8 @@ public:
         laserOdometryROS.pose.pose.position.y = transformTobeMapped[4];
         laserOdometryROS.pose.pose.position.z = transformTobeMapped[5];
         laserOdometryROS.pose.pose.orientation = tf::createQuaternionMsgFromRollPitchYaw(transformTobeMapped[0], transformTobeMapped[1], transformTobeMapped[2]);
-        laserOdometryROS.pose.covariance[0] = double(imuPreintegrationResetId);
-        pubOdomAftMappedROS.publish(laserOdometryROS);
+        laserOdometryROS.pose.covariance[0] = double(imuPreintegrationResetId); //每发生一次闭环，增加1
+        pubOdomAftMappedROS.publish(laserOdometryROS); 
     }
 
     void publishFrames()
@@ -1398,6 +1409,7 @@ public:
         publishCloud(&pubKeyPoses, cloudKeyPoses3D, timeLaserInfoStamp, "odom");
         // Publish surrounding key frames
         publishCloud(&pubRecentKeyFrames, laserCloudSurfFromMapDS, timeLaserInfoStamp, "odom");
+
         // publish registered key frame
         if (pubRecentKeyFrame.getNumSubscribers() != 0)
         {
@@ -1407,6 +1419,7 @@ public:
             *cloudOut += *transformPointCloud(laserCloudSurfLastDS,    &thisPose6D);
             publishCloud(&pubRecentKeyFrame, cloudOut, timeLaserInfoStamp, "odom");
         }
+
         // publish registered high-res raw cloud
         if (pubCloudRegisteredRaw.getNumSubscribers() != 0)
         {
@@ -1416,6 +1429,7 @@ public:
             *cloudOut = *transformPointCloud(cloudOut,  &thisPose6D);
             publishCloud(&pubCloudRegisteredRaw, cloudOut, timeLaserInfoStamp, "odom");
         }
+
         // publish path
         if (pubPath.getNumSubscribers() != 0)
         {
