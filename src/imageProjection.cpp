@@ -78,10 +78,10 @@ public:
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(pointCloudTopic, 5, &ImageProjection::cloudHandler, this, ros::TransportHints().tcpNoDelay());
 
         pubExtractedCloud = nh.advertise<sensor_msgs::PointCloud2> ("lio_sam/deskew/cloud_deskewed", 1);
-        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 1); //给后面的特征提取模块用
+        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 10); //给后面的特征提取模块用
 
         allocateMemory();
-        // resetParameters();
+        resetParameters();
 
         pcl::console::setVerbosityLevel(pcl::console::L_ERROR);
     }
@@ -208,7 +208,7 @@ public:
         if (ringFlag == 0)
         {
             ringFlag = -1;
-            for (int i = 0; i < currentCloudMsg.fields.size(); ++i)
+            for (int i = 0; i < (int)currentCloudMsg.fields.size(); ++i)
             {
                 if (currentCloudMsg.fields[i].name == "ring")
                 {
@@ -227,9 +227,9 @@ public:
         if (deskewFlag == 0)
         {
             deskewFlag = -1;
-            for (int i = 0; i < currentCloudMsg.fields.size(); ++i)
+            for (int i = 0; i < (int)currentCloudMsg.fields.size(); ++i)
             {
-                if (currentCloudMsg.fields[i].name == "time") //TODO: 确认velodyne是否有time field
+                if (currentCloudMsg.fields[i].name == "time") //最新的velodyne驱动的确有time field
                 {
                     deskewFlag = 1;
                     break;
@@ -285,7 +285,7 @@ public:
         imuPointerCur = 0;
         
         //以当前帧为原点，用[curr next]间每个imu的角速度累积得到每个imu时刻，laser的角度(imuRotX，imuRotY，imuRotZ)
-        for (int i = 0; i < imuQueue.size(); ++i)
+        for (int i = 0; i < (int)imuQueue.size(); ++i)
         {
             sensor_msgs::Imu thisImuMsg = imuQueue[i];
             double currentImuTime = thisImuMsg.header.stamp.toSec();
@@ -350,7 +350,7 @@ public:
 
         // get start odometry at the beinning of the scan
         nav_msgs::Odometry startOdomMsg; //找到时间戳>=当前帧laser, 且和当前帧laser挨得最近的imu odom
-        for (int i = 0; i < odomQueue.size(); ++i)
+        for (int i = 0; i < (int)odomQueue.size(); ++i)
         {
             startOdomMsg = odomQueue[i];
 
@@ -385,7 +385,7 @@ public:
 
         nav_msgs::Odometry endOdomMsg; //找到时间戳>=下一帧laser, 且和下一帧laser挨得最近的imu odom, 即下一帧laser在map下pose
 
-        for (int i = 0; i < odomQueue.size(); ++i)
+        for (int i = 0; i < (int)odomQueue.size(); ++i)
         {
             endOdomMsg = odomQueue[i];
 

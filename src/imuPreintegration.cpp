@@ -92,7 +92,7 @@ public:
         gtsam::imuBias::ConstantBias prior_imu_bias((gtsam::Vector(6) << 0, 0, 0, 0, 0, 0).finished());; // assume zero initial bias
 
         priorPoseNoise  = gtsam::noiseModel::Diagonal::Sigmas((gtsam::Vector(6) << 1e-2, 1e-2, 1e-2, 1e-2, 1e-2, 1e-2).finished()); // rad,rad,rad,m, m, m
-        priorVelNoise   = gtsam::noiseModel::Isotropic::Sigma(3, 1e2); // m/s
+        priorVelNoise   = gtsam::noiseModel::Isotropic::Sigma(3, 1e4); // m/s
         priorBiasNoise  = gtsam::noiseModel::Isotropic::Sigma(6, 1e-3); // 1e-2 ~ 1e-3 seems to be good
         correctionNoise = gtsam::noiseModel::Isotropic::Sigma(6, 1e-2); // meter
         noiseModelBetweenBias = (gtsam::Vector(6) << imuAccBiasN, imuAccBiasN, imuAccBiasN, imuGyrBiasN, imuGyrBiasN, imuGyrBiasN).finished();
@@ -147,11 +147,12 @@ public:
         {
             resetParams();
             imuPreintegrationResetId = currentResetId;
+            return;
         }
 
 
         // 0. initialize system
-        if (systemInitialized == false)//第一帧laser为世界坐标系原点W
+        if (systemInitialized == false)
         {
             resetOptimization(); //reset factor graph
 
@@ -340,7 +341,7 @@ public:
     bool failureDetection(const gtsam::Vector3& velCur, const gtsam::imuBias::ConstantBias& biasCur)
     {
         Eigen::Vector3f vel(velCur.x(), velCur.y(), velCur.z());
-        if (vel.norm() > 10)
+        if (vel.norm() > 30)
         {
             ROS_WARN("Large velocity, reset IMU-preintegration!");
             return true;
@@ -348,7 +349,7 @@ public:
 
         Eigen::Vector3f ba(biasCur.accelerometer().x(), biasCur.accelerometer().y(), biasCur.accelerometer().z());
         Eigen::Vector3f bg(biasCur.gyroscope().x(), biasCur.gyroscope().y(), biasCur.gyroscope().z());
-        if (ba.norm() > 0.1 || bg.norm() > 0.1)
+        if (ba.norm() > 1.0 || bg.norm() > 1.0)
         {
             ROS_WARN("Large bias, reset IMU-preintegration!");
             return true;
@@ -362,11 +363,11 @@ public:
         sensor_msgs::Imu thisImu = imuConverter(*imu_raw);//转到laser下的a，w，q
 
         // publish static tf  
-        //感觉没有必要用imu这么高的频率发布一个static TF, 作者的map和odom是同一个坐标系，我们给它屏蔽掉.
+        //在不使用GPS时，感觉没有必要用imu这么高的频率发布一个static TF, 作者的map和odom是同一个坐标系，我们给它屏蔽掉.
         // 如果在launch文件中发布map--->odom,发布的频率低时，rviz中不显示地图
         //（推荐）办法1： rviz直接以odom为世界坐标系显示，所有的点云默认是在odom坐标系下的
         //办法2： launch文件中发的频率提高
-        // tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, thisImu.header.stamp, "map", "odom")); //恒为(I, 0)
+        tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, thisImu.header.stamp, "map", "odom")); //恒为(I, 0)
 
         imuQueOpt.push_back(thisImu); //压入双端队列后面
         imuQueImu.push_back(thisImu);

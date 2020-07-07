@@ -140,8 +140,6 @@ public:
 
     Eigen::Affine3f transPointAssociateToMap;
 
-    Eigen::Affine3f lastImuTransformation;
-
     mapOptimization()
     {
         ISAM2Params parameters;
@@ -151,10 +149,10 @@ public:
 
         pubKeyPoses = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/trajectory", 1); //关键帧在map下的轨迹(位置position)
         pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_global", 1); //全局地图
-        pubOdomAftMappedROS = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1); //帧在map下的位姿, 5hz
-        pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1); //帧在map下的轨迹(pose)
+        pubOdomAftMappedROS = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1); //关键帧在map下的位姿, 5hz
+        pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1); //关键帧在map下的轨迹(pose)
 
-        subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 1, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
+        subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 10, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
         subGPS = nh.subscribe<nav_msgs::Odometry> (gpsTopic, 200, &mapOptimization::gpsHandler, this, ros::TransportHints().tcpNoDelay());
 
         pubHistoryKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_history_cloud", 1); //有潜力发生闭环的history map
@@ -215,7 +213,8 @@ public:
 
         matP.setZero();
     }
-
+    
+    //每一帧laser的回调函数，频率10hz
     void laserCloudInfoHandler(const lio_sam::cloud_infoConstPtr& msgIn)
     {
         // extract time stamp
@@ -364,7 +363,7 @@ public:
         pcl::PointCloud<PointType>::Ptr globalSurfCloud(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr globalSurfCloudDS(new pcl::PointCloud<PointType>());
         pcl::PointCloud<PointType>::Ptr globalMapCloud(new pcl::PointCloud<PointType>());
-        for (int i = 0; i < cloudKeyPoses3D->size(); i++) {
+        for (int i = 0; i < (int)cloudKeyPoses3D->size(); i++) {
             *globalCornerCloud += *transformPointCloud(cornerCloudKeyFrames[i],  &cloudKeyPoses6D->points[i]);
             *globalSurfCloud   += *transformPointCloud(surfCloudKeyFrames[i],    &cloudKeyPoses6D->points[i]);
             cout << "\r" << std::flush << "Processing feature cloud " << i << " of " << cloudKeyPoses6D->size() << " ...";
@@ -408,7 +407,7 @@ public:
         kdtreeGlobalMap->radiusSearch(cloudKeyPoses3D->back(), globalMapVisualizationSearchRadius, pointSearchIndGlobalMap, pointSearchSqDisGlobalMap, 0);
         mtx.unlock();
 
-        for (int i = 0; i < pointSearchIndGlobalMap.size(); ++i)
+        for (int i = 0; i < (int)pointSearchIndGlobalMap.size(); ++i)
             globalMapKeyPoses->push_back(cloudKeyPoses3D->points[pointSearchIndGlobalMap[i]]);
         // downsample near selected key frames
         pcl::VoxelGrid<PointType> downSizeFilterGlobalMapKeyPoses; // for global map visualization
@@ -417,7 +416,7 @@ public:
         downSizeFilterGlobalMapKeyPoses.filter(*globalMapKeyPosesDS);
 
         // extract visualized and downsampled key frames
-        for (int i = 0; i < globalMapKeyPosesDS->size(); ++i){
+        for (int i = 0; i < (int)globalMapKeyPosesDS->size(); ++i){
             if (pointDistance(globalMapKeyPosesDS->points[i], cloudKeyPoses3D->back()) > globalMapVisualizationSearchRadius)
                 continue;
             int thisKeyInd = (int)globalMapKeyPosesDS->points[i].intensity;
@@ -473,7 +472,7 @@ public:
         kdtreeHistoryKeyPoses->radiusSearch(cloudKeyPoses3D->back(), historyKeyframeSearchRadius, pointSearchIndLoop, pointSearchSqDisLoop, 0);
         
         closestHistoryFrameID = -1;
-        for (int i = 0; i < pointSearchIndLoop.size(); ++i)
+        for (int i = 0; i < (int)pointSearchIndLoop.size(); ++i)
         {
             int id = pointSearchIndLoop[i];
             if (abs(cloudKeyPoses6D->points[id].time - timeLaserCloudInfoLast) > historyKeyframeSearchTimeDiff)
@@ -486,7 +485,7 @@ public:
         if (closestHistoryFrameID == -1)
             return false;
 
-        if (cloudKeyPoses3D->size() - 1 == closestHistoryFrameID)
+        if ((int)cloudKeyPoses3D->size() - 1 == closestHistoryFrameID)
             return false;
 
         // save latest key frames
@@ -580,15 +579,27 @@ public:
         gtSAMgraph.add(BetweenFactor<Pose3>(latestFrameIDLoopCloure, closestHistoryFrameID, poseFrom.between(poseTo), constraintNoise));
         isam->update(gtSAMgraph);
         isam->update();
-        // isam->update();
-        // isam->update();
-        // isam->update();
-        // isam->update();
+        isam->update();
+        isam->update();
+        isam->update();
+        isam->update();
         gtSAMgraph.resize(0);
 
-        aLoopIsClosed = true;
+        isamCurrentEstimate = isam->calculateEstimate();
+        Pose3 latestEstimate = isamCurrentEstimate.at<Pose3>(isamCurrentEstimate.size()-1);
 
-        // ROS_WARN("True loop occured !");
+        transformTobeMapped[0] = latestEstimate.rotation().roll();
+        transformTobeMapped[1] = latestEstimate.rotation().pitch();
+        transformTobeMapped[2] = latestEstimate.rotation().yaw();
+        transformTobeMapped[3] = latestEstimate.translation().x();
+        transformTobeMapped[4] = latestEstimate.translation().y();
+        transformTobeMapped[5] = latestEstimate.translation().z();
+
+        correctPoses();
+
+        aLoopIsClosed = true;  //两处会置为true，另一处是接收到可靠的GPS
+
+        ROS_INFO("True loop occured");
     }
 
 
@@ -603,6 +614,7 @@ public:
 
     void updateInitialGuess()
     {
+        static Eigen::Affine3f lastImuTransformation;
         // initialization
         if (cloudKeyPoses3D->points.empty())
         {
@@ -616,9 +628,14 @@ public:
             lastImuTransformation = pcl::getTransformation(0, 0, 0, cloudInfo.imuRollInit, cloudInfo.imuPitchInit, cloudInfo.imuYawInit); // save imu before return;
             return;
         }
+        
+        
+        //ROS_WARN("imu= %d, odom = %d, cloud = %d, self = %d ", cloudInfo.imuAvailable, cloudInfo.odomAvailable, cloudInfo.imuPreintegrationResetId , imuPreintegrationResetId);
+        //debug发现： cloudInfo.imuAvailable == 1， 恒等于1
+
 
         // use imu pre-integration estimation for pose guess
-        if (cloudInfo.odomAvailable == true && cloudInfo.imuPreintegrationResetId == imuPreintegrationResetId)
+        if (cloudInfo.odomAvailable == true && cloudInfo.imuPreintegrationResetId == imuPreintegrationResetId) //没有发生闭环
         { 
             transformTobeMapped[0] = cloudInfo.initialGuessRoll; //每一帧laser在map下pose, imuPreintegration模块发布。
             transformTobeMapped[1] = cloudInfo.initialGuessPitch;
@@ -634,9 +651,9 @@ public:
         
         
         // use imu incremental estimation for pose guess (only rotation)
-        if (cloudInfo.imuAvailable == true) 
-        {   //TODO  cloudInfo.odomAvailable 一会为true, 一会为false, https://github.com/TixiaoShan/LIO-SAM/issues/7
-            ROS_WARN("odom = %d, cloud = %d, self = %d ", cloudInfo.odomAvailable, cloudInfo.imuPreintegrationResetId , imuPreintegrationResetId);
+        if (cloudInfo.imuAvailable == true) //等价于cloudInfo.odomAvailable == false 或者 cloudInfo.imuPreintegrationResetId != imuPreintegrationResetId
+        {   //cloudInfo.odomAvailable 一会为true, 一会为false, https: //github.com/TixiaoShan/LIO-SAM/issues/7
+            //ROS_WARN("odom = %d, cloud = %d, self = %d ", cloudInfo.odomAvailable, cloudInfo.imuPreintegrationResetId , imuPreintegrationResetId);
 
             Eigen::Affine3f transBack = pcl::getTransformation(0, 0, 0, cloudInfo.imuRollInit, cloudInfo.imuPitchInit, cloudInfo.imuYawInit);
             Eigen::Affine3f transIncre = lastImuTransformation.inverse() * transBack;
@@ -657,8 +674,8 @@ public:
         int numPoses = cloudKeyPoses3D->size();
         for (int i = numPoses-1; i >= 0; --i)
         {
-            if (cloudToExtract->size() <= surroundingKeyframeSize) //25
-                cloudToExtract->push_back(cloudKeyPoses3D->points[i]); //当前往前25帧
+            if ((int)cloudToExtract->size() <= surroundingKeyframeSize)
+                cloudToExtract->push_back(cloudKeyPoses3D->points[i]);
             else
                 break;
         }
@@ -676,7 +693,7 @@ public:
         // extract all the nearby key poses and downsample them
         kdtreeSurroundingKeyPoses->setInputCloud(cloudKeyPoses3D); // create kd-tree
         kdtreeSurroundingKeyPoses->radiusSearch(cloudKeyPoses3D->back(), (double)surroundingKeyframeSearchRadius, pointSearchInd, pointSearchSqDis);
-        for (int i = 0; i < pointSearchInd.size(); ++i)
+        for (int i = 0; i < (int)pointSearchInd.size(); ++i)
         {
             int id = pointSearchInd[i];
             surroundingKeyPoses->push_back(cloudKeyPoses3D->points[id]);
@@ -708,7 +725,7 @@ public:
 
         // extract surrounding map
         #pragma omp parallel for num_threads(numberOfCores)
-        for (int i = 0; i < cloudToExtract->size(); ++i)
+        for (int i = 0; i < (int)cloudToExtract->size(); ++i)
         {
             if (pointDistance(cloudToExtract->points[i], cloudKeyPoses3D->back()) > surroundingKeyframeSearchRadius)
                 continue;
@@ -720,7 +737,7 @@ public:
         // fuse the map
         laserCloudCornerFromMap->clear();
         laserCloudSurfFromMap->clear(); 
-        for (int i = 0; i < cloudToExtract->size(); ++i)
+        for (int i = 0; i < (int)cloudToExtract->size(); ++i)
         {
             *laserCloudCornerFromMap += laserCloudCornerSurroundingVec[i];
             *laserCloudSurfFromMap   += laserCloudSurfSurroundingVec[i];
@@ -1202,6 +1219,9 @@ public:
         if (poseCovariance(3,3) < poseCovThreshold && poseCovariance(4,4) < poseCovThreshold)
             return;
 
+        // last gps position
+        static PointType lastGPSPoint;
+
         while (!gpsQueue.empty())
         {
             if (gpsQueue.front().header.stamp.toSec() < timeLaserCloudInfoLast - 0.2)
@@ -1214,7 +1234,7 @@ public:
                 // message too new
                 break;
             }
-            else
+            else //在[当前帧laser - 0.2， 当前帧laser + 0.2]
             {
                 nav_msgs::Odometry thisGPS = gpsQueue.front();
                 gpsQueue.pop_front();
@@ -1239,8 +1259,18 @@ public:
                 if (abs(gps_x) < 1e-6 && abs(gps_y) < 1e-6)
                     continue;
 
+                // Add GPS every a few meters
+                PointType curGPSPoint;
+                curGPSPoint.x = gps_x;
+                curGPSPoint.y = gps_y;
+                curGPSPoint.z = gps_z;
+                if (pointDistance(curGPSPoint, lastGPSPoint) < 5.0)
+                    continue;
+                else
+                    lastGPSPoint = curGPSPoint;
+
                 gtsam::Vector Vector3(3);
-                Vector3 << noise_x, noise_y, noise_z;
+                Vector3 << max(noise_x, 1.0f), max(noise_y, 1.0f), max(noise_z, 1.0f);
                 noiseModel::Diagonal::shared_ptr gps_noise = noiseModel::Diagonal::Variances(Vector3);
                 gtsam::GPSFactor gps_factor(cloudKeyPoses3D->size(), gtsam::Point3(gps_x, gps_y, gps_z), gps_noise);
                 gtSAMgraph.add(gps_factor);
@@ -1272,11 +1302,11 @@ public:
         // update multiple-times till converge
         if (aLoopIsClosed == true)
         {
-            // isam->update(); //更新多次有助于快速收敛，但可能会有其他问题。见https://github.com/TixiaoShan/LIO-SAM/issues/5
-            // isam->update();
-            // isam->update();
-            // isam->update();
-            // isam->update();
+            isam->update();
+            isam->update();
+            isam->update();
+            isam->update();
+            isam->update();
         }
         
         gtSAMgraph.resize(0);
@@ -1397,7 +1427,7 @@ public:
         laserOdometryROS.pose.pose.position.y = transformTobeMapped[4];
         laserOdometryROS.pose.pose.position.z = transformTobeMapped[5];
         laserOdometryROS.pose.pose.orientation = tf::createQuaternionMsgFromRollPitchYaw(transformTobeMapped[0], transformTobeMapped[1], transformTobeMapped[2]);
-        laserOdometryROS.pose.covariance[0] = double(imuPreintegrationResetId); //每发生一次闭环，增加1
+        laserOdometryROS.pose.covariance[0] = double(imuPreintegrationResetId); //每发生一次闭环，增加1。把这个标志传递到imu预积分因子图中去
         pubOdomAftMappedROS.publish(laserOdometryROS); 
     }
 

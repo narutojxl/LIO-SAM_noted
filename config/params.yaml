@@ -3,13 +3,13 @@ lio_sam:
   # Topics
   pointCloudTopic: "points_raw"               # Point cloud data
   imuTopic: "imu_raw"                         # IMU data
-  odomTopic: "odometry/imu"                   # IMU pre-preintegration odometry, same frequency as IMU, 和odom--->base_link是同一个数据
-  gpsTopic: "odometry/gpsz"                   # GPS odometry topic from navsat, see module_navsat.launch file
+  odomTopic: "odometry/imu"                   # IMU pre-preintegration odometry, same frequency as IMU, 和odom--->base_link TF是同一个数据
+  gpsTopic: "odometry/gps"                    # GPS odometry topic from navsat, see module_navsat.launch file
 
   # GPS Settings
-  useImuHeadingInitialization: false          # if using GPS data, set to "true"
+  useImuHeadingInitialization: true          # if using GPS data, set to "true"
   useGpsElevation: false                      # if GPS elevation(海拔) is bad, set to "false"
-  gpsCovThreshold: 2.0                        # m^2, threshold for using GPS data
+  gpsCovThresh  old: 2.0                        # m^2, threshold for using GPS data
   poseCovThreshold: 25.0                      # m^2, threshold for using GPS data
   
   # Export settings
@@ -51,7 +51,7 @@ lio_sam:
   surfFeatureMinValidNum: 100
 
   # voxel filter paprams
-  odometrySurfLeafSize: 0.2                     # default: 0.2
+  odometrySurfLeafSize: 0.4                     # default: 0.4
   mappingCornerLeafSize: 0.2                    # default: 0.2
   mappingSurfLeafSize: 0.4                      # default: 0.4
 
@@ -118,6 +118,8 @@ ekf_gps:
                 false, false, false,
                 false, false, true,
                 true,  true,  true]
+  #roll, pitch, yaw, wz, ax, ay, az
+
   imu0_differential: false
   imu0_queue_size: 50 
   imu0_remove_gravitational_acceleration: true
@@ -129,7 +131,9 @@ ekf_gps:
                  false, false, false,
                  false, false, false,
                  false, false, false,
-                 false, false, false]
+                 false, false, false] 
+  #x, y, z
+
   odom0_differential: false
   odom0_queue_size: 10
 

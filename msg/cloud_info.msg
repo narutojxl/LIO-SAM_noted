@@ -16,7 +16,7 @@ float32 imuPitchInit
 float32 imuYawInit
 
 # Initial guess from imu pre-integration
-float32 initialGuessX  #每一帧laser在map下pose, imuPreintegration模块发布。imageProjection.cpp赋值
+float32 initialGuessX  #每一帧laser在map下pose, imuPreintegration模块预测发布的。imageProjection.cpp赋值
 float32 initialGuessY
 float32 initialGuessZ
 float32 initialGuessRoll
