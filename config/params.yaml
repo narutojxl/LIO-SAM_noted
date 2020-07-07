@@ -21,11 +21,21 @@ lio_sam:
   Horizon_SCAN: 1800                          # lidar horizontal resolution (Velodyne:1800, Ouster:512,1024,2048)
 
   # IMU Settings
-  imuAccNoise: 3.9939570888238808e-03
-  imuGyrNoise: 1.5636343949698187e-03
-  imuAccBiasN: 6.4356659353532566e-05
-  imuGyrBiasN: 3.5640318696367613e-05
+  # imuAccNoise: 3.9939570888238808e-03  
+  # imuGyrNoise: 1.5636343949698187e-03
+  # imuAccBiasN: 6.4356659353532566e-05
+  # imuGyrBiasN: 3.5640318696367613e-05
+  # imuGravity: 9.80511
+
+
+  # IMU Settings for adi16480 
+  imuAccNoise: 6.5e-03
+  imuGyrNoise: 1.1e-03
+  imuAccBiasN: 1.96e-03
+  imuGyrBiasN: 6.6e-05
   imuGravity: 9.80511
+
+
 
   # Extrinsics (lidar -> IMU)
   extrinsicTrans: [0.0, 0.0, 0.0]
