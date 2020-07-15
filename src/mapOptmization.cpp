@@ -447,7 +447,7 @@ public:
         if (loopClosureEnableFlag == false)
             return;
 
-        ros::Rate rate(0.2);
+        ros::Rate rate(0.1);
         while (ros::ok())
         {
             rate.sleep();
@@ -578,10 +578,6 @@ public:
         std::lock_guard<std::mutex> lock(mtx);
         gtSAMgraph.add(BetweenFactor<Pose3>(latestFrameIDLoopCloure, closestHistoryFrameID, poseFrom.between(poseTo), constraintNoise));
         isam->update(gtSAMgraph);
-        isam->update();
-        isam->update();
-        isam->update();
-        isam->update();
         isam->update();
         gtSAMgraph.resize(0);
 
@@ -1130,7 +1126,7 @@ public:
         {
             if (std::abs(cloudInfo.imuPitchInit) < 1.4) //万向锁阈值
             {
-                double imuWeight = 0.05;
+                double imuWeight = 0.01;
                 tf::Quaternion imuQuaternion;
                 tf::Quaternion transformQuaternion;
                 double rollMid, pitchMid, yawMid;
@@ -1299,16 +1295,6 @@ public:
         isam->update(gtSAMgraph, initialEstimate);
         isam->update();
 
-        // update multiple-times till converge
-        if (aLoopIsClosed == true)
-        {
-            isam->update();
-            isam->update();
-            isam->update();
-            isam->update();
-            isam->update();
-        }
-        
         gtSAMgraph.resize(0);
         initialEstimate.clear();
 
@@ -1402,8 +1388,8 @@ public:
     void updatePath(const PointTypePose& pose_in)
     {
         geometry_msgs::PoseStamped pose_stamped;
-        pose_stamped.header.stamp = timeLaserInfoStamp;
-        pose_stamped.header.frame_id = "odom"; //map
+        pose_stamped.header.stamp = ros::Time().fromSec(pose_in.time);
+        pose_stamped.header.frame_id = "odom";
         pose_stamped.pose.position.x = pose_in.x;
         pose_stamped.pose.position.y = pose_in.y;
         pose_stamped.pose.position.z = pose_in.z;

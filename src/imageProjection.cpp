@@ -11,9 +11,8 @@ struct PointXYZIRT
 } EIGEN_ALIGN16;
 
 POINT_CLOUD_REGISTER_POINT_STRUCT (PointXYZIRT,  
-                                   (float, x, x) (float, y, y)
-                                   (float, z, z) (float, intensity, intensity)
-                                   (uint16_t, ring, ring) (float, time, time)
+    (float, x, x) (float, y, y) (float, z, z) (float, intensity, intensity)
+    (uint16_t, ring, ring) (float, time, time)
 )
 
 const int queueLength = 500;
@@ -174,7 +173,7 @@ public:
 
         resetParameters();
     }
-    
+
     //缓存数据，检查laser point中是否有ring，time field
     bool cachePointCloud(const sensor_msgs::PointCloud2ConstPtr& laserCloudMsg)
     {
@@ -229,7 +228,7 @@ public:
             deskewFlag = -1;
             for (int i = 0; i < (int)currentCloudMsg.fields.size(); ++i)
             {
-                if (currentCloudMsg.fields[i].name == "time") //最新的velodyne驱动的确有time field
+                if (currentCloudMsg.fields[i].name == timeField)
                 {
                     deskewFlag = 1;
                     break;
@@ -367,7 +366,7 @@ public:
         tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
 
         // Initial guess used in mapOptimization
-        cloudInfo.initialGuessX = startOdomMsg.pose.pose.position.x; //当前帧laser在map下pose
+        cloudInfo.initialGuessX = startOdomMsg.pose.pose.position.x; //当前帧laser在map下pose, imu预测得到的
         cloudInfo.initialGuessY = startOdomMsg.pose.pose.position.y;
         cloudInfo.initialGuessZ = startOdomMsg.pose.pose.position.z;
         cloudInfo.initialGuessRoll  = roll;
@@ -507,9 +506,11 @@ public:
             if (rowIdn < 0 || rowIdn >= N_SCAN)
                 continue;
 
+            if (rowIdn % downsampleRate != 0)
+                continue;
             float horizonAngle = atan2(thisPoint.x, thisPoint.y) * 180 / M_PI; //velodyne是顺时针旋转
 
-            float ang_res_x = 360.0/float(Horizon_SCAN);
+            static float ang_res_x = 360.0/float(Horizon_SCAN);
             int columnIdn = -round((horizonAngle-90.0)/ang_res_x) + Horizon_SCAN/2;
             if (columnIdn >= Horizon_SCAN)
                 columnIdn -= Horizon_SCAN;
