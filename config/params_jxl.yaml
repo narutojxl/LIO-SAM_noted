@@ -63,16 +63,16 @@ lio_sam:
   surfFeatureMinValidNum: 100
 
   # voxel filter paprams
-  odometrySurfLeafSize: 0.4                     # default: 0.4
+  odometrySurfLeafSize: 0.1                     # default: 0.4
   mappingCornerLeafSize: 0.2                    # default: 0.2
-  mappingSurfLeafSize: 0.4                      # default: 0.4
+  mappingSurfLeafSize: 0.2                      # default: 0.4
 
   # robot motion constraint (in case you are using a 2D robot)
   z_tollerance: 1000                            # meters
   rotation_tollerance: 1000                     # radians
 
   # CPU Params
-  numberOfCores: 4                              # number of cores for mapping optimization, default: 4
+  numberOfCores: 8                              # number of cores for mapping optimization, default: 4
   mappingProcessInterval: 0.15                  # seconds, regulate mapping frequency
 
   # Surrounding map
@@ -92,7 +92,7 @@ lio_sam:
   # Visualization
   globalMapVisualizationSearchRadius: 1000.0    # meters, global map visualization radius
   globalMapVisualizationPoseDensity: 10.0       # meters, global map visualization keyframe density
-  globalMapVisualizationLeafSize: 1.0           # meters, global map visualization cloud density, default: 1.0 只是影响显示，最终生成的pcd文件跟可视化参数无关
+  globalMapVisualizationLeafSize: 0.2           # meters, global map visualization cloud density, default: 1.0 只是影响显示，最终生成的pcd文件跟可视化参数无关
 
 
 
