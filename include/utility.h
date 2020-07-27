@@ -10,6 +10,8 @@
 #include <sensor_msgs/NavSatFix.h>
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
+#include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
 
 #include <opencv/cv.h>
 
@@ -62,10 +64,16 @@ public:
 
     std::string robot_id;
 
+    //Topics
     string pointCloudTopic;
     string imuTopic;
     string odomTopic;
     string gpsTopic;
+
+    //Frames
+    string lidarFrame;
+    string odometryFrame;
+    string mapFrame;
 
     // GPS Settings
     bool useImuHeadingInitialization;
@@ -142,6 +150,10 @@ public:
         nh.param<std::string>("lio_sam/imuTopic", imuTopic, "imu_correct");
         nh.param<std::string>("lio_sam/odomTopic", odomTopic, "odometry/imu");
         nh.param<std::string>("lio_sam/gpsTopic", gpsTopic, "odometry/gps");
+
+        nh.param<std::string>("lio_sam/lidarFrame", lidarFrame, "base_link");
+        nh.param<std::string>("lio_sam/odometryFrame", odometryFrame, "odom");
+        nh.param<std::string>("lio_sam/mapFrame", mapFrame, "map");
 
         nh.param<bool>("lio_sam/useImuHeadingInitialization", useImuHeadingInitialization, false);
         nh.param<bool>("lio_sam/useGpsElevation", useGpsElevation, false);

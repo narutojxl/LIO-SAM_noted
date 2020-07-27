@@ -24,6 +24,8 @@ class IMUPreintegration : public ParamServer
 {
 public:
 
+    std::mutex mtx;
+
     ros::Subscriber subImu;
     ros::Subscriber subOdometry;
     ros::Publisher pubImuOdometry;
@@ -72,7 +74,9 @@ public:
     int imuPreintegrationResetId = 0;
 
     gtsam::Pose3 imu2Lidar = gtsam::Pose3(gtsam::Rot3(1, 0, 0, 0), gtsam::Point3(-extTrans.x(), -extTrans.y(), -extTrans.z()));
-    gtsam::Pose3 lidar2Imu = gtsam::Pose3(gtsam::Rot3(1, 0, 0, 0), gtsam::Point3(extTrans.x(), extTrans.y(), extTrans.z()));;
+    gtsam::Pose3 lidar2Imu = gtsam::Pose3(gtsam::Rot3(1, 0, 0, 0), gtsam::Point3(extTrans.x(), extTrans.y(), extTrans.z()));
+
+    bool pubTFFlag = true;
 
     IMUPreintegration()
     {
@@ -101,6 +105,14 @@ public:
         imuIntegratorOpt_ = new gtsam::PreintegratedImuMeasurements(p, prior_imu_bias); // setting up the IMU integration for optimization        
     }
 
+    void incrementalSetting()
+    {
+        // configure this class to publish incremental odometry (no pose correction)
+        subOdometry = nh.subscribe<nav_msgs::Odometry>("lio_sam/mapping/odometry_incremental", 5, &IMUPreintegration::odometryHandler, this, ros::TransportHints().tcpNoDelay());
+        pubImuOdometry = nh.advertise<nav_msgs::Odometry> (odomTopic+"_incremental", 2000);
+        pubTFFlag = false;
+    }
+
     void resetOptimization()
     {
         gtsam::ISAM2Params optParameters;
@@ -126,6 +138,8 @@ public:
     //后端发布的每一关键帧的回调函数
     void odometryHandler(const nav_msgs::Odometry::ConstPtr& odomMsg)
     {
+        std::lock_guard<std::mutex> lock(mtx);
+
         double currentCorrectionTime = ROS_TIME(odomMsg);
 
         // make sure we have imu data to integrate
@@ -360,6 +374,7 @@ public:
 
     void imuHandler(const sensor_msgs::Imu::ConstPtr& imu_raw)
     {
+        std::lock_guard<std::mutex> lock(mtx);
         sensor_msgs::Imu thisImu = imuConverter(*imu_raw);//转到laser下的a，w，q
 
         // publish static tf  
@@ -367,7 +382,8 @@ public:
         // 如果在launch文件中发布map--->odom,发布的频率低时，rviz中不显示地图
         //（推荐）办法1： rviz直接以odom为世界坐标系显示，所有的点云默认是在odom坐标系下的
         //办法2： launch文件中发的频率提高
-        tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, thisImu.header.stamp, "map", "odom")); //恒为(I, 0)
+		if (pubTFFlag)
+        tfMap2Odom.sendTransform(tf::StampedTransform(map_to_odom, thisImu.header.stamp, mapFrame, odometryFrame)); //恒为(I, 0)
 
         imuQueOpt.push_back(thisImu); //压入双端队列后面
         imuQueImu.push_back(thisImu);
@@ -390,7 +406,7 @@ public:
         // publish odometry
         nav_msgs::Odometry odometry;
         odometry.header.stamp = thisImu.header.stamp;
-        odometry.header.frame_id = "odom";
+        odometry.header.frame_id = odometryFrame;
         odometry.child_frame_id = "odom_imu";
 
         // transform imu pose to ldiar
@@ -417,29 +433,32 @@ public:
         // publish imu path
         static nav_msgs::Path imuPath;
         static double last_path_time = -1;
-        if (imuTime - last_path_time > 0.1)
+        if (imuTime - last_path_time > 0.1 && pubTFFlag)
         {
             last_path_time = imuTime;
             geometry_msgs::PoseStamped pose_stamped;
             pose_stamped.header.stamp = thisImu.header.stamp;
-            pose_stamped.header.frame_id = "odom";
+            pose_stamped.header.frame_id = odometryFrame;
             pose_stamped.pose = odometry.pose.pose;
-            imuPath.poses.push_back(pose_stamped);           
+            imuPath.poses.push_back(pose_stamped);
             while(!imuPath.poses.empty() && abs(imuPath.poses.front().header.stamp.toSec() - imuPath.poses.back().header.stamp.toSec()) > 3.0)
                 imuPath.poses.erase(imuPath.poses.begin());
             if (pubImuPath.getNumSubscribers() != 0)
             {
                 imuPath.header.stamp = thisImu.header.stamp;
-                imuPath.header.frame_id = "odom";
+                imuPath.header.frame_id = odometryFrame;
                 pubImuPath.publish(imuPath);
             }
         }
 
         // publish transformation
-        tf::Transform tCur;
-        tf::poseMsgToTF(odometry.pose.pose, tCur);
-        tf::StampedTransform odom_2_baselink = tf::StampedTransform(tCur, thisImu.header.stamp, "odom", "base_link");
-        tfOdom2BaseLink.sendTransform(odom_2_baselink);
+        if (pubTFFlag)
+        {
+            tf::Transform tCur;
+            tf::poseMsgToTF(odometry.pose.pose, tCur);
+            tf::StampedTransform odom_2_baselink = tf::StampedTransform(tCur, thisImu.header.stamp, odometryFrame, lidarFrame);
+            tfOdom2BaseLink.sendTransform(odom_2_baselink);
+        }
     }
 };
 
@@ -448,11 +467,15 @@ int main(int argc, char** argv)
 {
     ros::init(argc, argv, "roboat_loam");
     
-    IMUPreintegration ImuP;
+    IMUPreintegration ImuP_global;
+
+    IMUPreintegration ImuP_incremental;
+    ImuP_incremental.incrementalSetting();
 
     ROS_INFO("\033[1;32m----> IMU Preintegration Started.\033[0m");
     
-    ros::spin();
+    ros::MultiThreadedSpinner spinner(4);
+    spinner.spin();
     
     return 0;
 }
