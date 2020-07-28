@@ -121,7 +121,7 @@ public:
     pcl::VoxelGrid<PointType> downSizeFilterSurroundingKeyPoses; // for surrounding key poses of scan-to-map optimization
     
     ros::Time timeLaserInfoStamp;
-    double timeLaserCloudInfoLast;
+    double timeLaserInfoCur;
 
     float transformTobeMapped[6]; //roll pitch yaw x y z, R = rz(yaw) * ry(pitch) * rx(roll)
 
@@ -136,8 +136,10 @@ public:
     int laserCloudSurfLastDSNum = 0;
 
     bool aLoopIsClosed = false;
-    int imuPreintegrationResetId = 0;
     map<int, int> loopIndexContainer; // from new to old
+    vector<pair<int, int>> loopIndexQueue;
+    vector<gtsam::Pose3> loopPoseQueue;
+    vector<gtsam::noiseModel::Diagonal::shared_ptr> loopNoiseQueue;
 
     nav_msgs::Path globalPath;
 
@@ -158,7 +160,7 @@ public:
         pubLaserOdometryIncremental = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry_incremental", 1); //关键帧在map下的位姿, 5hz
         pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1); //关键帧在map下的轨迹(pose)
 
-        subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 10, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
+        subLaserCloudInfo = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 1, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
         subGPS = nh.subscribe<nav_msgs::Odometry> (gpsTopic, 200, &mapOptimization::gpsHandler, this, ros::TransportHints().tcpNoDelay());
 
         pubHistoryKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_history_cloud", 1); //有潜力发生闭环的history map
@@ -228,7 +230,7 @@ public:
     {
         // extract time stamp
         timeLaserInfoStamp = msgIn->header.stamp;
-        timeLaserCloudInfoLast = msgIn->header.stamp.toSec();
+        timeLaserInfoCur = msgIn->header.stamp.toSec();
 
         // extract info and feature cloud
         cloudInfo = *msgIn;
@@ -238,9 +240,9 @@ public:
         std::lock_guard<std::mutex> lock(mtx);
 
         static double timeLastProcessing = -1;
-        if (timeLaserCloudInfoLast - timeLastProcessing >= mappingProcessInterval)
+        if (timeLaserInfoCur - timeLastProcessing >= mappingProcessInterval)
         {
-            timeLastProcessing = timeLaserCloudInfoLast;
+            timeLastProcessing = timeLaserInfoCur;
 
             updateInitialGuess();
 
@@ -462,13 +464,19 @@ public:
         {
             rate.sleep();
             performLoopClosure();
+            visualizeLoopClosure();
         }
     }
 
     bool detectLoopClosure(int *latestID, int *closestID)
     {
-        int latestFrameIDLoopCloure;
-        int closestHistoryFrameID;
+        int latestFrameIDLoopCloure = copy_cloudKeyPoses3D->size() - 1;
+        int closestHistoryFrameID = -1;
+
+        // check loop constraint added before
+        auto it = loopIndexContainer.find(latestFrameIDLoopCloure);
+        if (it != loopIndexContainer.end())
+            return false;
 
         latestKeyFrameCloud->clear();
         nearHistoryKeyFrameCloud->clear();
@@ -479,11 +487,10 @@ public:
         kdtreeHistoryKeyPoses->setInputCloud(copy_cloudKeyPoses3D);
         kdtreeHistoryKeyPoses->radiusSearch(copy_cloudKeyPoses3D->back(), historyKeyframeSearchRadius, pointSearchIndLoop, pointSearchSqDisLoop, 0);
         
-        closestHistoryFrameID = -1;
         for (int i = 0; i < (int)pointSearchIndLoop.size(); ++i)
         {
             int id = pointSearchIndLoop[i];
-            if (abs(copy_cloudKeyPoses6D->points[id].time - timeLaserCloudInfoLast) > historyKeyframeSearchTimeDiff)
+            if (abs(copy_cloudKeyPoses6D->points[id].time - timeLaserInfoCur) > historyKeyframeSearchTimeDiff)
             {
                 closestHistoryFrameID = id;
                 break;
@@ -493,18 +500,12 @@ public:
         if (closestHistoryFrameID == -1)
             return false;
 
-        if ((int)copy_cloudKeyPoses3D->size() - 1 == closestHistoryFrameID)
+        if (latestFrameIDLoopCloure == closestHistoryFrameID)
             return false;
 
         // save latest key frames
-        latestFrameIDLoopCloure = copy_cloudKeyPoses3D->size() - 1;
         *latestKeyFrameCloud += *transformPointCloud(cornerCloudKeyFrames[latestFrameIDLoopCloure], &copy_cloudKeyPoses6D->points[latestFrameIDLoopCloure]);
         *latestKeyFrameCloud += *transformPointCloud(surfCloudKeyFrames[latestFrameIDLoopCloure],   &copy_cloudKeyPoses6D->points[latestFrameIDLoopCloure]);
-
-        // check loop constraint added before
-        auto it = loopIndexContainer.find(latestFrameIDLoopCloure);
-        if (it != loopIndexContainer.end())
-            return false;
 
         // save history near key frames
         bool nearFrameAvailable = false;
@@ -541,9 +542,8 @@ public:
         if (detectLoopClosure(&latestFrameIDLoopCloure, &closestHistoryFrameID) == false)
             return;
 
-
         // ICP Settings
-        pcl::IterativeClosestPoint<PointType, PointType> icp;
+        static pcl::IterativeClosestPoint<PointType, PointType> icp;
         icp.setMaxCorrespondenceDistance(historyKeyframeSearchRadius*2);
         icp.setMaximumIterations(100);
         icp.setTransformationEpsilon(1e-6);
@@ -593,61 +593,64 @@ public:
         noiseModel::Diagonal::shared_ptr constraintNoise = noiseModel::Diagonal::Variances(Vector6);
 
         // Add pose constraint
-        std::lock_guard<std::mutex> lock(mtx);
-        gtSAMgraph.add(BetweenFactor<Pose3>(latestFrameIDLoopCloure, closestHistoryFrameID, poseFrom.between(poseTo), constraintNoise));
+        mtx.lock();
+        loopIndexQueue.push_back(make_pair(latestFrameIDLoopCloure, closestHistoryFrameID));
+        loopPoseQueue.push_back(poseFrom.between(poseTo));
+        loopNoiseQueue.push_back(constraintNoise);
+        mtx.unlock();
 
-        aLoopIsClosed = true;
-
-        // visualize loop constriant
+        // add loop constriant
         loopIndexContainer[latestFrameIDLoopCloure] = closestHistoryFrameID;
+    }
+
+    void visualizeLoopClosure()
+    {
+        visualization_msgs::MarkerArray markerArray;
+        // loop nodes
+        visualization_msgs::Marker markerNode;
+        markerNode.header.frame_id = odometryFrame;
+        markerNode.header.stamp = timeLaserInfoStamp;
+        markerNode.action = visualization_msgs::Marker::ADD;
+        markerNode.type = visualization_msgs::Marker::SPHERE_LIST;
+        markerNode.ns = "loop_nodes";
+        markerNode.id = 0;
+        markerNode.pose.orientation.w = 1;
+        markerNode.scale.x = 0.3; markerNode.scale.y = 0.3; markerNode.scale.z = 0.3; 
+        markerNode.color.r = 0; markerNode.color.g = 0.8; markerNode.color.b = 1;
+        markerNode.color.a = 1;
+        // loop edges
+        visualization_msgs::Marker markerEdge;
+        markerEdge.header.frame_id = odometryFrame;
+        markerEdge.header.stamp = timeLaserInfoStamp;
+        markerEdge.action = visualization_msgs::Marker::ADD;
+        markerEdge.type = visualization_msgs::Marker::LINE_LIST;
+        markerEdge.ns = "loop_edges";
+        markerEdge.id = 1;
+        markerEdge.pose.orientation.w = 1;
+        markerEdge.scale.x = 0.1; markerEdge.scale.y = 0.1; markerEdge.scale.z = 0.1;
+        markerEdge.color.r = 0.9; markerEdge.color.g = 0.9; markerEdge.color.b = 0;
+        markerEdge.color.a = 1;
+
+        for (auto it = loopIndexContainer.begin(); it != loopIndexContainer.end(); ++it)
         {
-            visualization_msgs::MarkerArray markerArray;
-            // loop nodes
-            visualization_msgs::Marker markerNode;
-            markerNode.header.frame_id = "odom";
-            markerNode.header.stamp = timeLaserInfoStamp;
-            markerNode.action = visualization_msgs::Marker::ADD;
-            markerNode.type = visualization_msgs::Marker::SPHERE_LIST;
-            markerNode.ns = "loop_nodes";
-            markerNode.id = 0;
-            markerNode.pose.orientation.w = 1;
-            markerNode.scale.x = 0.3; markerNode.scale.y = 0.3; markerNode.scale.z = 0.3; 
-            markerNode.color.r = 0; markerNode.color.g = 0.8; markerNode.color.b = 1;
-            markerNode.color.a = 1;
-            // loop edges
-            visualization_msgs::Marker markerEdge;
-            markerEdge.header.frame_id = "odom";
-            markerEdge.header.stamp = timeLaserInfoStamp;
-            markerEdge.action = visualization_msgs::Marker::ADD;
-            markerEdge.type = visualization_msgs::Marker::LINE_LIST;
-            markerEdge.ns = "loop_edges";
-            markerEdge.id = 1;
-            markerEdge.pose.orientation.w = 1;
-            markerEdge.scale.x = 0.1; markerEdge.scale.y = 0.1; markerEdge.scale.z = 0.1;
-            markerEdge.color.r = 0.9; markerEdge.color.g = 0.9; markerEdge.color.b = 0;
-            markerEdge.color.a = 1;
-
-            for (auto it = loopIndexContainer.begin(); it != loopIndexContainer.end(); ++it)
-            {
-                int key_cur = it->first;
-                int key_pre = it->second;
-                geometry_msgs::Point p;
-                p.x = copy_cloudKeyPoses6D->points[key_cur].x;
-                p.y = copy_cloudKeyPoses6D->points[key_cur].y;
-                p.z = copy_cloudKeyPoses6D->points[key_cur].z;
-                markerNode.points.push_back(p);
-                markerEdge.points.push_back(p);
-                p.x = copy_cloudKeyPoses6D->points[key_pre].x;
-                p.y = copy_cloudKeyPoses6D->points[key_pre].y;
-                p.z = copy_cloudKeyPoses6D->points[key_pre].z;
-                markerNode.points.push_back(p);
-                markerEdge.points.push_back(p);
-            }
-
-            markerArray.markers.push_back(markerNode);
-            markerArray.markers.push_back(markerEdge);
-            pubLoopConstraintEdge.publish(markerArray);
+            int key_cur = it->first;
+            int key_pre = it->second;
+            geometry_msgs::Point p;
+            p.x = copy_cloudKeyPoses6D->points[key_cur].x;
+            p.y = copy_cloudKeyPoses6D->points[key_cur].y;
+            p.z = copy_cloudKeyPoses6D->points[key_cur].z;
+            markerNode.points.push_back(p);
+            markerEdge.points.push_back(p);
+            p.x = copy_cloudKeyPoses6D->points[key_pre].x;
+            p.y = copy_cloudKeyPoses6D->points[key_pre].y;
+            p.z = copy_cloudKeyPoses6D->points[key_pre].z;
+            markerNode.points.push_back(p);
+            markerEdge.points.push_back(p);
         }
+
+        markerArray.markers.push_back(markerNode);
+        markerArray.markers.push_back(markerEdge);
+        pubLoopConstraintEdge.publish(markerArray);
     }
 
 
@@ -688,9 +691,8 @@ public:
         // use imu pre-integration estimation for pose guess
         static bool lastImuPreTransAvailable = false;
         static Eigen::Affine3f lastImuPreTransformation;
-        if (cloudInfo.odomAvailable == true && cloudInfo.imuPreintegrationResetId == imuPreintegrationResetId)
-        {   
-		    //每一帧laser在map下pose, imuPreintegration模块发布。
+        if (cloudInfo.odomAvailable == true)
+        {
             Eigen::Affine3f transBack = pcl::getTransformation(cloudInfo.initialGuessX,    cloudInfo.initialGuessY,     cloudInfo.initialGuessZ, 
                                                                cloudInfo.initialGuessRoll, cloudInfo.initialGuessPitch, cloudInfo.initialGuessYaw);
             if (lastImuPreTransAvailable == false)
@@ -767,7 +769,7 @@ public:
         int numPoses = cloudKeyPoses3D->size();
         for (int i = numPoses-1; i >= 0; --i)
         {
-            if (timeLaserCloudInfoLast - cloudKeyPoses6D->points[i].time < 10.0) //当前帧往前10s内的frames，转换到map下组成local map
+            if (timeLaserInfoCur - cloudKeyPoses6D->points[i].time < 10.0) //当前帧往前10s内的frames，转换到map下组成local map
                 surroundingKeyPosesDS->push_back(cloudKeyPoses3D->points[i]);
             else
                 break;
@@ -1287,12 +1289,12 @@ public:
 
         while (!gpsQueue.empty())
         {
-            if (gpsQueue.front().header.stamp.toSec() < timeLaserCloudInfoLast - 0.2)
+            if (gpsQueue.front().header.stamp.toSec() < timeLaserInfoCur - 0.2)
             {
                 // message too old
                 gpsQueue.pop_front();
             }
-            else if (gpsQueue.front().header.stamp.toSec() > timeLaserCloudInfoLast + 0.2)
+            else if (gpsQueue.front().header.stamp.toSec() > timeLaserInfoCur + 0.2)
             {
                 // message too new
                 break;
@@ -1344,6 +1346,26 @@ public:
         }
     }
 
+    void addLoopFactor()
+    {
+        if (loopIndexQueue.empty())
+            return;
+
+        for (int i = 0; i < (int)loopIndexQueue.size(); ++i)
+        {
+            int indexFrom = loopIndexQueue[i].first;
+            int indexTo = loopIndexQueue[i].second;
+            gtsam::Pose3 poseBetween = loopPoseQueue[i];
+            gtsam::noiseModel::Diagonal::shared_ptr noiseBetween = loopNoiseQueue[i];
+            gtSAMgraph.add(BetweenFactor<Pose3>(indexFrom, indexTo, poseBetween, noiseBetween));
+        }
+
+        loopIndexQueue.clear();
+        loopPoseQueue.clear();
+        loopNoiseQueue.clear();
+        aLoopIsClosed = true;
+    }
+
     void saveKeyFramesAndFactor()
     {
         if (saveFrame() == false) //是否保留该帧为关键帧
@@ -1354,6 +1376,9 @@ public:
 
         // gps factor
         addGPSFactor();
+
+        // loop factor
+        addLoopFactor();
 
         // cout << "****************************************************" << endl;
         // gtSAMgraph.print("GTSAM Graph:\n");
@@ -1397,7 +1422,7 @@ public:
         thisPose6D.roll  = latestEstimate.rotation().roll();
         thisPose6D.pitch = latestEstimate.rotation().pitch();
         thisPose6D.yaw   = latestEstimate.rotation().yaw();
-        thisPose6D.time = timeLaserCloudInfoLast;
+        thisPose6D.time = timeLaserInfoCur;
         cloudKeyPoses6D->push_back(thisPose6D);
 
         // cout << "****************************************************" << endl;
@@ -1455,9 +1480,6 @@ public:
             }
 
             aLoopIsClosed = false;
-
-            // ID for reseting IMU pre-integration
-            ++imuPreintegrationResetId; //每发生一次闭环，增加1
         }
     }
 
@@ -1489,8 +1511,13 @@ public:
         laserOdometryROS.pose.pose.position.y = transformTobeMapped[4];
         laserOdometryROS.pose.pose.position.z = transformTobeMapped[5];
         laserOdometryROS.pose.pose.orientation = tf::createQuaternionMsgFromRollPitchYaw(transformTobeMapped[0], transformTobeMapped[1], transformTobeMapped[2]);
-        laserOdometryROS.pose.covariance[0] = double(imuPreintegrationResetId); //每发生一次闭环，增加1。把这个标志传递到imu预积分因子图中去
-        pubLaserOdometryGlobal.publish(laserOdometryROS); 
+        pubLaserOdometryGlobal.publish(laserOdometryROS);
+        // Publish TF
+        static tf::TransformBroadcaster br;
+        tf::Transform t_odom_to_lidar = tf::Transform(tf::createQuaternionFromRPY(transformTobeMapped[0], transformTobeMapped[1], transformTobeMapped[2]),
+                                                      tf::Vector3(transformTobeMapped[3], transformTobeMapped[4], transformTobeMapped[5]));
+        tf::StampedTransform trans_odom_to_lidar = tf::StampedTransform(t_odom_to_lidar, timeLaserInfoStamp, odometryFrame, "lidar_link");
+        br.sendTransform(trans_odom_to_lidar);
 
         // Publish odometry for ROS (incremental)
         static bool lastIncreOdomPubFlag = false;
@@ -1510,7 +1537,7 @@ public:
             {
                 if (std::abs(cloudInfo.imuPitchInit) < 1.4)
                 {
-                    double imuWeight = 0.05;
+                    double imuWeight = 0.01;
                     tf::Quaternion imuQuaternion;
                     tf::Quaternion transformQuaternion;
                     double rollMid, pitchMid, yawMid;

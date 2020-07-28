@@ -1,6 +1,7 @@
 #include "utility.h"
 #include "lio_sam/cloud_info.h"
 
+// Velodyne
 struct PointXYZIRT
 {
     PCL_ADD_POINT4D
@@ -14,6 +15,24 @@ POINT_CLOUD_REGISTER_POINT_STRUCT (PointXYZIRT,
     (float, x, x) (float, y, y) (float, z, z) (float, intensity, intensity)
     (uint16_t, ring, ring) (float, time, time)
 )
+
+// Ouster
+// struct PointXYZIRT {
+//     PCL_ADD_POINT4D;
+//     float intensity;
+//     uint32_t t;
+//     uint16_t reflectivity;
+//     uint8_t ring;
+//     uint16_t noise;
+//     uint32_t range;
+//     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+// }EIGEN_ALIGN16;
+
+// POINT_CLOUD_REGISTER_POINT_STRUCT(PointXYZIRT,
+//     (float, x, x) (float, y, y) (float, z, z) (float, intensity, intensity)
+//     (uint32_t, t, t) (uint16_t, reflectivity, reflectivity)
+//     (uint8_t, ring, ring) (uint16_t, noise, noise) (uint32_t, range, range)
+// )
 
 const int queueLength = 500;
 
@@ -77,7 +96,7 @@ public:
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(pointCloudTopic, 5, &ImageProjection::cloudHandler, this, ros::TransportHints().tcpNoDelay());
 
         pubExtractedCloud = nh.advertise<sensor_msgs::PointCloud2> ("lio_sam/deskew/cloud_deskewed", 1);
-        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 10); //给后面的特征提取模块用
+        pubLaserCloudInfo = nh.advertise<lio_sam::cloud_info> ("lio_sam/deskew/cloud_info", 1); //给后面的特征提取模块用
 
         allocateMemory();
         resetParameters();
@@ -372,7 +391,6 @@ public:
         cloudInfo.initialGuessRoll  = roll;
         cloudInfo.initialGuessPitch = pitch;
         cloudInfo.initialGuessYaw   = yaw;
-        cloudInfo.imuPreintegrationResetId = round(startOdomMsg.pose.covariance[0]);
 
         cloudInfo.odomAvailable = true;
 

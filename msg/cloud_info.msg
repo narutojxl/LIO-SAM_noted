@@ -23,9 +23,6 @@ float32 initialGuessRoll
 float32 initialGuessPitch
 float32 initialGuessYaw
 
-# Preintegration reset ID
-int64 imuPreintegrationResetId
-
 # Point cloud messages
 sensor_msgs/PointCloud2 cloud_deskewed  # original cloud deskewed, 全部都转换到了本帧的start下， featureExtraction.cpp赋值
 sensor_msgs/PointCloud2 cloud_corner    # extracted corner feature  #featureExtraction.cpp赋值
