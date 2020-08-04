@@ -29,6 +29,7 @@ public:
     ros::Subscriber subLaserOdometry;
 
     ros::Publisher pubImuOdometry;
+    ros::Publisher pubImuPath;
 
     Eigen::Affine3f lidarOdomAffine;
     Eigen::Affine3f imuOdomAffineFront;
@@ -59,6 +60,7 @@ public:
         subImuOdometry   = nh.subscribe<nav_msgs::Odometry>(odomTopic+"_incremental",   2000, &TransformFusion::imuOdometryHandler,   this, ros::TransportHints().tcpNoDelay());
 
         pubImuOdometry   = nh.advertise<nav_msgs::Odometry>(odomTopic, 2000);
+        pubImuPath       = nh.advertise<nav_msgs::Path>    ("lio_sam/imu/path", 1);
     }
 
     Eigen::Affine3f odom2affine(nav_msgs::Odometry odom)
@@ -126,6 +128,28 @@ public:
             tCur = tCur * lidar2Baselink;
         tf::StampedTransform odom_2_baselink = tf::StampedTransform(tCur, odomMsg->header.stamp, odometryFrame, baselinkFrame);
         tfOdom2BaseLink.sendTransform(odom_2_baselink);
+
+        // publish IMU path
+        static nav_msgs::Path imuPath;
+        static double last_path_time = -1;
+        double imuTime = imuOdomQueue.back().header.stamp.toSec();
+        if (imuTime - last_path_time > 0.1)
+        {
+            last_path_time = imuTime;
+            geometry_msgs::PoseStamped pose_stamped;
+            pose_stamped.header.stamp = imuOdomQueue.back().header.stamp;
+            pose_stamped.header.frame_id = odometryFrame;
+            pose_stamped.pose = laserOdometry.pose.pose;
+            imuPath.poses.push_back(pose_stamped);
+            while(!imuPath.poses.empty() && imuPath.poses.front().header.stamp.toSec() < lidarOdomTime - 0.1)
+                imuPath.poses.erase(imuPath.poses.begin());
+            if (pubImuPath.getNumSubscribers() != 0)
+            {
+                imuPath.header.stamp = imuOdomQueue.back().header.stamp;
+                imuPath.header.frame_id = odometryFrame;
+                pubImuPath.publish(imuPath);
+            }
+        }
     }
 };
 
@@ -138,13 +162,6 @@ public:
     ros::Subscriber subImu;
     ros::Subscriber subOdometry;
     ros::Publisher pubImuOdometry;
-    ros::Publisher pubImuPath;
-
-    // map -> odom
-    tf::Transform map_to_odom;
-    tf::TransformBroadcaster tfMap2Odom;
-    // odom -> base_link
-    tf::TransformBroadcaster tfOdom2BaseLink;
 
     bool systemInitialized = false;
 
@@ -191,9 +208,6 @@ public:
         //后端发布的每一关键帧的回调函数
 
         pubImuOdometry = nh.advertise<nav_msgs::Odometry> (odomTopic+"_incremental", 2000); //imu在gtsam上一键帧结果上,每来一次imu mea预测得到的位姿，频率与imu一样！
-        pubImuPath     = nh.advertise<nav_msgs::Path>     ("lio_sam/imu/path", 1); //上面pose的所有轨迹
-
-        map_to_odom    = tf::Transform(tf::createQuaternionFromRPY(0, 0, 0), tf::Vector3(0, 0, 0));
 
         boost::shared_ptr<gtsam::PreintegrationParams> p = gtsam::PreintegrationParams::MakeSharedU(imuGravity);
         p->accelerometerCovariance  = gtsam::Matrix33::Identity(3,3) * pow(imuAccNoise, 2); // acc white noise in continuous

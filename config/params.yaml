@@ -8,6 +8,7 @@ lio_sam:
 
   # Frames
   lidarFrame: "base_link"
+  baselinkFrame: "base_link"
   odometryFrame: "odom"
   mapFrame: "map"
 
@@ -88,6 +89,7 @@ lio_sam:
 
   # Loop closure
   loopClosureEnableFlag: true
+  loopClosureFrequency: 1.0                     # Hz, regulate loop closure constraint add frequency
   surroundingKeyframeSize: 50                   # submap size (when loop closure enabled), 当前位姿往前25个帧且距离在surroundingKeyframeSearchRadius内的帧构成local map 
   historyKeyframeSearchRadius: 15.0             # meters, key frame that is within n meters from current pose will be considerd for loop closure
   historyKeyframeSearchTimeDiff: 30.0           # seconds, key frame that is n seconds older will be considered for loop closure
