@@ -276,7 +276,7 @@ public:
             // pop old IMU message
             while (!imuQueOpt.empty())//弹出imuQueOpt中在第一帧laser时间点以前的meas
             {
-                if (ROS_TIME(&imuQueOpt.front()) < currentCorrectionTime - delta_t)
+                if (ROS_TIME(&imuQueOpt.front()) < currentCorrectionTime - delta_t) //const double delta_t = 0;
                 {
                     lastImuT_opt = ROS_TIME(&imuQueOpt.front());
                     imuQueOpt.pop_front();
@@ -319,7 +319,7 @@ public:
         }
 
 
-        // reset graph for speed   //2：每100次关键帧reset factor graph 
+        // reset graph for speed   //2：每处理100次关键帧，reset factor graph 
         if (key == 100)
         {
             // get updated noise before reset
@@ -376,6 +376,8 @@ public:
                 break;
         }
 
+        //优化的变量是关键帧(PVQBaBg)
+
         // add imu preintegration factor to graph
         const gtsam::PreintegratedImuMeasurements& preint_imu = dynamic_cast<const gtsam::PreintegratedImuMeasurements&>(*imuIntegratorOpt_); //常引用
         gtsam::ImuFactor imu_factor(X(key - 1), V(key - 1), X(key), V(key), B(key - 1), preint_imu);
@@ -391,7 +393,7 @@ public:
         graphFactors.add(pose_factor);
 
         // insert predicted values
-        gtsam::NavState propState_ = imuIntegratorOpt_->predict(prevState_, prevBias_); //插入imu在上一帧gtsam的结果上预测出来的当前帧PVQ
+        gtsam::NavState propState_ = imuIntegratorOpt_->predict(prevState_, prevBias_); //插入imu在上一帧gtsam的结果上预测出来的当前帧PVQ，X(key), V(key)
         graphValues.insert(X(key), propState_.pose());
         graphValues.insert(V(key), propState_.v());
         graphValues.insert(B(key), prevBias_);
@@ -436,7 +438,7 @@ public:
         if (!imuQueImu.empty())
         {
             // reset bias use the newly optimized bias
-            imuIntegratorImu_->resetIntegrationAndSetBias(prevBiasOdom);
+            imuIntegratorImu_->resetIntegrationAndSetBias(prevBiasOdom); //每处理一个关键帧reset imuIntegratorImu_
 
             // integrate imu message from the beginning of this optimization
             for (int i = 0; i < (int)imuQueImu.size(); ++i)
@@ -480,12 +482,6 @@ public:
         std::lock_guard<std::mutex> lock(mtx);
         sensor_msgs::Imu thisImu = imuConverter(*imu_raw);//转到laser下的a，w，q
 
-        // publish static tf  
-        //在不使用GPS时，感觉没有必要用imu这么高的频率发布一个static TF, 作者的map和odom是同一个坐标系，我们给它屏蔽掉.
-        // 如果在launch文件中发布map--->odom,发布的频率低时，rviz中不显示地图
-        //（推荐）办法1： rviz直接以odom为世界坐标系显示，所有的点云默认是在odom坐标系下的
-        //办法2： launch文件中发的频率提高
-
         imuQueOpt.push_back(thisImu); //压入双端队列后面
         imuQueImu.push_back(thisImu);
 
@@ -501,7 +497,8 @@ public:
                                                 gtsam::Vector3(thisImu.angular_velocity.x,    thisImu.angular_velocity.y,    thisImu.angular_velocity.z), dt);
 
         // predict odometry
-        gtsam::NavState currentState = imuIntegratorImu_->predict(prevStateOdom, prevBiasOdom); //应该是laser state
+        gtsam::NavState currentState = imuIntegratorImu_->predict(prevStateOdom, prevBiasOdom); //在关键帧的回调函数中计算得到
+        //应该是laser state
         //在gtsam得到的上一帧PVQBaBg基础上，每来一次imu做一次预测。这样每个imu mea都会有一个位姿，该topic频率和imu的频率一致！
 
         // publish odometry

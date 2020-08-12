@@ -204,11 +204,11 @@ public:
         else
         {
             currentCloudMsg = cloudQueue.front();
-            cloudQueue.pop_front();
+            cloudQueue.pop_front(); //在这已经弹出了一次front
 
             cloudHeader = currentCloudMsg.header;
             timeScanCur = cloudHeader.stamp.toSec();
-            timeScanNext = cloudQueue.front().header.stamp.toSec();
+            timeScanNext = cloudQueue.front().header.stamp.toSec(); //next laser time
         }
 
         // convert cloud
@@ -295,14 +295,15 @@ public:
             else
                 break;
         }
-        //imu front()跟当前帧laser时间戳很近(小于0.01 s)
+        //imuQueue.front()跟当前帧laser时间戳很近(小于0.01 s)
 
         if (imuQueue.empty())
             return;
 
         imuPointerCur = 0;
         
-        //以当前帧为原点，用[curr next]间每个imu的角速度累积得到每个imu时刻，laser的角度(imuRotX，imuRotY，imuRotZ)
+        //以当前帧为原点，用[curr-0.01  next+0.01]间每个imu的角速度，累积得到每个imu时刻，laser的角度(imuRotX[]，imuRotY[]，imuRotZ[])
+        //后面用每个点的时间戳和imuRotX，imuRotY，imuRotZ时间戳，找到每个点的姿态(rpy),从而把每个点旋转到start下，实现去旋转歪斜。
         for (int i = 0; i < (int)imuQueue.size(); ++i)
         {
             sensor_msgs::Imu thisImuMsg = imuQueue[i];
@@ -311,6 +312,8 @@ public:
             // get roll, pitch, and yaw estimation for this scan
             if (currentImuTime <= timeScanCur) //和当前帧挨地最近的imu信息作为当前帧的角度
                 imuRPY2rosRPY(&thisImuMsg, &cloudInfo.imuRollInit, &cloudInfo.imuPitchInit, &cloudInfo.imuYawInit); //imu测量的当前帧laser的RPY
+                //订阅imu的作用1：是为了计算当前帧laser在全局下的的RPY。
+                //作用2：用角速度计算imuRotX，imuRotY，imuRotZ, 实现点云去旋转歪斜。
 
             if (currentImuTime > timeScanNext + 0.01)
                 break;
@@ -345,7 +348,7 @@ public:
         cloudInfo.imuAvailable = true;
     }
 
-    //得到当前帧到下一帧的变换
+    
     void odomDeskewInfo()
     {
         cloudInfo.odomAvailable = false;
@@ -364,7 +367,7 @@ public:
         if (odomQueue.front().header.stamp.toSec() > timeScanCur)
             return;
         
-        //imu odom queue.front() <= 当前帧laser, 和当前帧挨得很近(0.01s 之内)
+        //imu odomQueue.front() >= 当前帧laser, 和当前帧挨得很近(0.01s之内)
 
         // get start odometry at the beinning of the scan
         nav_msgs::Odometry startOdomMsg; //找到时间戳>=当前帧laser, 且和当前帧laser挨得最近的imu odom
@@ -385,7 +388,7 @@ public:
         tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
 
         // Initial guess used in mapOptimization
-        cloudInfo.initialGuessX = startOdomMsg.pose.pose.position.x; //当前帧laser在map下pose, imu预测得到的
+        cloudInfo.initialGuessX = startOdomMsg.pose.pose.position.x; //订阅imu积分出来的odom的作用1：得到当前帧laser在map下pose, imu预测得到的。
         cloudInfo.initialGuessY = startOdomMsg.pose.pose.position.y;
         cloudInfo.initialGuessZ = startOdomMsg.pose.pose.position.z;
         cloudInfo.initialGuessRoll  = roll;
@@ -397,7 +400,7 @@ public:
         // get end odometry at the end of the scan
         odomDeskewFlag = false;
 
-        if (odomQueue.back().header.stamp.toSec() < timeScanNext)
+        if (odomQueue.back().header.stamp.toSec() < timeScanNext) 
             return;
 
         nav_msgs::Odometry endOdomMsg; //找到时间戳>=下一帧laser, 且和下一帧laser挨得最近的imu odom, 即下一帧laser在map下pose
@@ -421,10 +424,11 @@ public:
         tf::Matrix3x3(orientation).getRPY(roll, pitch, yaw);
         Eigen::Affine3f transEnd = pcl::getTransformation(endOdomMsg.pose.pose.position.x, endOdomMsg.pose.pose.position.y, endOdomMsg.pose.pose.position.z, roll, pitch, yaw);
 
-        Eigen::Affine3f transBt = transBegin.inverse() * transEnd; //当前帧laser到下一帧laser的变换
+        Eigen::Affine3f transBt = transBegin.inverse() * transEnd; 
 
         float rollIncre, pitchIncre, yawIncre;
-        pcl::getTranslationAndEulerAngles(transBt, odomIncreX, odomIncreY, odomIncreZ, rollIncre, pitchIncre, yawIncre);
+        pcl::getTranslationAndEulerAngles(transBt, odomIncreX, odomIncreY, odomIncreZ, rollIncre, pitchIncre, yawIncre); 
+        //订阅imu积分出来的odom的作用2：得到当前帧到下一帧的平移变换。当sensor运动很快时，要对点云去平移歪斜。
         //Extract x,y,z and the Euler angles (XYZ-convention) from the given transformation
 
         odomDeskewFlag = true;
@@ -435,13 +439,15 @@ public:
         *rotXCur = 0; *rotYCur = 0; *rotZCur = 0;
 
         int imuPointerFront = 0;
-        while (imuPointerFront < imuPointerCur)
+        while (imuPointerFront < imuPointerCur) //imuTime[imuPointerCur]的时间戳等于next laser timestamp 
         {
             if (pointTime < imuTime[imuPointerFront])
                 break;
             ++imuPointerFront;
         }
-
+        //退出while时存在两种情况
+        //1: imuTime[imuPointerFront]第一次大于pointTime
+        //2: imuTime[imuPointerFront] < pointTime 
         if (pointTime > imuTime[imuPointerFront] || imuPointerFront == 0)
         {
             *rotXCur = imuRotX[imuPointerFront];
@@ -483,7 +489,7 @@ public:
         double pointTime = timeScanCur + relTime;
 
         float rotXCur, rotYCur, rotZCur;
-        findRotation(pointTime, &rotXCur, &rotYCur, &rotZCur); //得到从本帧start点到当前点的旋转
+        findRotation(pointTime, &rotXCur, &rotYCur, &rotZCur); //根据当前点的时间戳和imu queue中时间戳，得到当前点在全局下的姿态(rpy)
 
         float posXCur, posYCur, posZCur;
         findPosition(relTime, &posXCur, &posYCur, &posZCur); //恒为0 0 0
@@ -500,7 +506,7 @@ public:
         Eigen::Affine3f transBt = transStartInverse * transFinal; //从本帧start点到当前点的变换
 
         PointType newPoint; //转换到本帧start下
-        newPoint.x = transBt(0,0) * point->x + transBt(0,1) * point->y + transBt(0,2) * point->z + transBt(0,3);
+        newPoint.x = transBt(0,0) * point->x +  (0,1) * point->y + transBt(0,2) * point->z + transBt(0,3);
         newPoint.y = transBt(1,0) * point->x + transBt(1,1) * point->y + transBt(1,2) * point->z + transBt(1,3);
         newPoint.z = transBt(2,0) * point->x + transBt(2,1) * point->y + transBt(2,2) * point->z + transBt(2,3);
         newPoint.intensity = point->intensity;
@@ -550,7 +556,9 @@ public:
             // if (thisPoint.z < -2.0)
             //     continue;
 
-            thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time); // Velodyne
+            thisPoint = deskewPoint(&thisPoint, laserCloudIn->points[i].time); //TODO: time: 每个点的时间戳 - msg.time
+            // Velodyne, 把每个点转换到当前帧start点下
+
             // thisPoint = deskewPoint(&thisPoint, (float)laserCloudIn->points[i].t / 1000000000.0); // Ouster
 
             rangeMat.at<float>(rowIdn, columnIdn) = pointDistance(thisPoint);

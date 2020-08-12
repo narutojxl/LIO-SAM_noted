@@ -737,7 +737,7 @@ public:
     void updateInitialGuess()
     {
         // save current transformation before any processing
-        incrementalOdometryAffineFront = trans2Affine3f(transformTobeMapped);
+        incrementalOdometryAffineFront = trans2Affine3f(transformTobeMapped); //在初值的基础上，上一帧与local map refine后的结果
 
         static Eigen::Affine3f lastImuTransformation;
         // initialization
@@ -754,11 +754,6 @@ public:
             return;
         }
         
-        
-        //ROS_WARN("imu= %d, odom = %d, cloud = %d, self = %d ", cloudInfo.imuAvailable, cloudInfo.odomAvailable, cloudInfo.imuPreintegrationResetId , imuPreintegrationResetId);
-        //debug发现： cloudInfo.imuAvailable == 1， 恒等于1
-
-
         // use imu pre-integration estimation for pose guess
         static bool lastImuPreTransAvailable = false;
         static Eigen::Affine3f lastImuPreTransformation;
@@ -785,10 +780,8 @@ public:
         }
 
         // use imu incremental estimation for pose guess (only rotation)
-        if (cloudInfo.imuAvailable == true) //等价于cloudInfo.odomAvailable == false 或者 cloudInfo.imuPreintegrationResetId != imuPreintegrationResetId
-        {   //cloudInfo.odomAvailable 一会为true, 一会为false, https: //github.com/TixiaoShan/LIO-SAM/issues/7
-            //ROS_WARN("odom = %d, cloud = %d, self = %d ", cloudInfo.odomAvailable, cloudInfo.imuPreintegrationResetId , imuPreintegrationResetId);
-
+        if (cloudInfo.imuAvailable == true) //等价于cloudInfo.odomAvailable == false
+        {
             Eigen::Affine3f transBack = pcl::getTransformation(0, 0, 0, cloudInfo.imuRollInit, cloudInfo.imuPitchInit, cloudInfo.imuYawInit);
             Eigen::Affine3f transIncre = lastImuTransformation.inverse() * transBack;
 
@@ -801,7 +794,8 @@ public:
             return;
         }
     }
-
+ 
+    //not used 
     void extractForLoopClosure()
     {
         pcl::PointCloud<PointType>::Ptr cloudToExtract(new pcl::PointCloud<PointType>());
