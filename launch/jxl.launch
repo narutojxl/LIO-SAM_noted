@@ -1,6 +1,8 @@
 <launch>
-
+    
     <arg name="project" default="lio_sam"/>
+
+    <!--当没有imu数据时，整个slam不会启动，rviz无任何显示-->
     
     <!-- Parameters -->
     <rosparam file="$(find lio_sam)/config/params_jxl.yaml" command="load" />

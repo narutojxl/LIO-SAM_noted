@@ -1,8 +1,8 @@
 lio_sam:
 
   # Topics
-  pointCloudTopic: "/velodyne_points"               # Point cloud data  #default: "points_raw"
-  imuTopic: "/imu/data"                         # IMU data   #default: "imu_raw"
+  pointCloudTopic: "velodyne_points"               # Point cloud data  #default: "points_raw"
+  imuTopic: "imu/data"                         # IMU data   #default: "imu_raw"
   odomTopic: "odometry/imu"                   # IMU pre-preintegration odometry, same frequency as IMU, 和odom--->base_link TF是同一个数据
   gpsTopic: "odometry/gpsz"                    # GPS odometry topic from navsat, see module_navsat.launch file
 

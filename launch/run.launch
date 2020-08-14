@@ -10,9 +10,6 @@
 
     <!--- Robot State TF -->
     <include file="$(find lio_sam)/launch/include/module_robot_state_publisher.launch" />
- 
-    <!--we added map to odom static tf here, comment the published in code imuPreintegration.cpp, 50hz-->
-    <!--node pkg="tf" type="static_transform_publisher" name="map_to_odom"  args="0 0 0 0 0 0 /map /odom 20" /-->
 
     <!--- Run Navsat -->
     <include file="$(find lio_sam)/launch/include/module_navsat.launch" />

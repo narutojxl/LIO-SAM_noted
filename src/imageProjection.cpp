@@ -506,7 +506,7 @@ public:
         Eigen::Affine3f transBt = transStartInverse * transFinal; //从本帧start点到当前点的变换
 
         PointType newPoint; //转换到本帧start下
-        newPoint.x = transBt(0,0) * point->x +  (0,1) * point->y + transBt(0,2) * point->z + transBt(0,3);
+        newPoint.x = transBt(0,0) * point->x + transBt(0,1) * point->y + transBt(0,2) * point->z + transBt(0,3);
         newPoint.y = transBt(1,0) * point->x + transBt(1,1) * point->y + transBt(1,2) * point->z + transBt(1,3);
         newPoint.z = transBt(2,0) * point->x + transBt(2,1) * point->y + transBt(2,2) * point->z + transBt(2,3);
         newPoint.intensity = point->intensity;
