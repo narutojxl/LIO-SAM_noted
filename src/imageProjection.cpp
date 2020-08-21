@@ -34,7 +34,7 @@ POINT_CLOUD_REGISTER_POINT_STRUCT (PointXYZIRT,
 //     (uint8_t, ring, ring) (uint16_t, noise, noise) (uint32_t, range, range)
 // )
 
-const int queueLength = 500;
+const int queueLength = 2000;
 
 class ImageProjection : public ParamServer
 {
@@ -81,7 +81,7 @@ private:
 
     lio_sam::cloud_info cloudInfo;  //cloud_info.msg
     double timeScanCur;
-    double timeScanNext;
+    double timeScanEnd;
     std_msgs::Header cloudHeader;
 
 
@@ -201,18 +201,17 @@ public:
 
         if (cloudQueue.size() <= 2)
             return false;
-        else
-        {
+        
+            // convert cloud
             currentCloudMsg = cloudQueue.front();
             cloudQueue.pop_front(); //在这已经弹出了一次front
+            pcl::fromROSMsg(currentCloudMsg, *laserCloudIn);
 
-            cloudHeader = currentCloudMsg.header;
-            timeScanCur = cloudHeader.stamp.toSec();
-            timeScanNext = cloudQueue.front().header.stamp.toSec(); //next laser time
-        }
-
-        // convert cloud
-        pcl::fromROSMsg(currentCloudMsg, *laserCloudIn);
+        // get timestamp
+        cloudHeader = currentCloudMsg.header;
+        timeScanCur = cloudHeader.stamp.toSec();
+        timeScanEnd = timeScanCur + laserCloudIn->points.back().time; // Velodyne
+        // timeScanEnd = timeScanCur + (float)laserCloudIn->points.back().t / 1000000000.0; // Ouster
 
         // check dense flag
         if (laserCloudIn->is_dense == false)
@@ -266,7 +265,7 @@ public:
         std::lock_guard<std::mutex> lock2(odoLock);
 
         // make sure IMU data available for the scan
-        if (imuQueue.empty() || imuQueue.front().header.stamp.toSec() > timeScanCur || imuQueue.back().header.stamp.toSec() < timeScanNext)
+        if (imuQueue.empty() || imuQueue.front().header.stamp.toSec() > timeScanCur || imuQueue.back().header.stamp.toSec() < timeScanEnd)
         {
             ROS_DEBUG("Waiting for IMU data ...");
             return false;
@@ -315,7 +314,7 @@ public:
                 //订阅imu的作用1：是为了计算当前帧laser在全局下的的RPY。
                 //作用2：用角速度计算imuRotX，imuRotY，imuRotZ, 实现点云去旋转歪斜。
 
-            if (currentImuTime > timeScanNext + 0.01)
+            if (currentImuTime > timeScanEnd + 0.01)
                 break;
 
             if (imuPointerCur == 0){
@@ -400,7 +399,7 @@ public:
         // get end odometry at the end of the scan
         odomDeskewFlag = false;
 
-        if (odomQueue.back().header.stamp.toSec() < timeScanNext) 
+        if (odomQueue.back().header.stamp.toSec() < timeScanEnd)
             return;
 
         nav_msgs::Odometry endOdomMsg; //找到时间戳>=下一帧laser, 且和下一帧laser挨得最近的imu odom, 即下一帧laser在map下pose
@@ -409,7 +408,7 @@ public:
         {
             endOdomMsg = odomQueue[i];
 
-            if (ROS_TIME(&endOdomMsg) < timeScanNext)
+            if (ROS_TIME(&endOdomMsg) < timeScanEnd)
                 continue;
             else
                 break;
