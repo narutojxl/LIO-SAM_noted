@@ -525,6 +525,10 @@ public:
             thisPoint.z = laserCloudIn->points[i].z;
             thisPoint.intensity = laserCloudIn->points[i].intensity;
 
+            float range = pointDistance(thisPoint);
+            if (range < lidarMinRange || range > lidarMaxRange)
+                continue;
+
             int rowIdn = laserCloudIn->points[i].ring;
             if (rowIdn < 0 || rowIdn >= N_SCAN)
                 continue;
@@ -541,11 +545,6 @@ public:
             if (columnIdn < 0 || columnIdn >= Horizon_SCAN)
                 continue;
 
-            float range = pointDistance(thisPoint);
-            
-            if (range < 1.0)
-                continue;
-
             if (rangeMat.at<float>(rowIdn, columnIdn) != FLT_MAX)
                 continue;
 
@@ -560,7 +559,7 @@ public:
 
             // thisPoint = deskewPoint(&thisPoint, (float)laserCloudIn->points[i].t / 1000000000.0); // Ouster
 
-            rangeMat.at<float>(rowIdn, columnIdn) = pointDistance(thisPoint);
+            rangeMat.at<float>(rowIdn, columnIdn) = range;
 
             int index = columnIdn  + rowIdn * Horizon_SCAN;
             fullCloud->points[index] = thisPoint; //转换到本帧start下
