@@ -155,15 +155,22 @@ public:
         parameters.relinearizeSkip = 1;
         isam = new ISAM2(parameters);
 
-        pubKeyPoses = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/trajectory", 1); //关键帧在map下的轨迹(位置position)
+        pubKeyPoses = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/trajectory", 1); //所有关键帧在map下的轨迹(位置position)
         pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/map_global", 1); //全局地图
-        pubLaserOdometryGlobal = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1);
-        pubLaserOdometryIncremental = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry_incremental", 1); //关键帧在map下的位姿, 5hz
-        pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1); //关键帧在map下的轨迹(pose)
+
+        pubLaserOdometryGlobal = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry", 1); //每一帧在map下的位姿
+        //the odometry with pose correction(loop，gps correction), thus it has no drift.
+
+        pubLaserOdometryIncremental = nh.advertise<nav_msgs::Odometry> ("lio_sam/mapping/odometry_incremental", 1); //每一帧在map下的位姿, 5hz
+        //pure lidar odometry without any correction, thus it has drifts.
+
+        pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1); //所有关键帧在map下的轨迹(位姿pose)
 
         subCloud = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 1, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
+        
         subGPS   = nh.subscribe<nav_msgs::Odometry> (gpsTopic, 200, &mapOptimization::gpsHandler, this, ros::TransportHints().tcpNoDelay());
         subLoop  = nh.subscribe<std_msgs::Float64MultiArray>("lio_loop/loop_closure_detection", 1, &mapOptimization::loopInfoHandler, this, ros::TransportHints().tcpNoDelay());
+        //GNSS模块发布
 
         pubHistoryKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_history_cloud", 1); //有潜力发生闭环的history map
         pubIcpKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_sam/mapping/icp_loop_closure_corrected_cloud", 1);  //闭环匹配后的点云
@@ -1288,6 +1295,10 @@ public:
         transformTobeMapped[5] = constraintTransformation(transformTobeMapped[5], z_tollerance);
 
         incrementalOdometryAffineBack = trans2Affine3f(transformTobeMapped);
+        //因为该函数是在scan2MapOptimization()里调用的，这个位姿仅仅是当前帧与local map匹配后的结果。
+        //如果当前帧为关键帧，saveKeyFramesAndFactor()里会调用gtsam对所有的位姿进行优化，即使没有loop, gps correction发生。
+        //这样的话，transformTobeMapped在优化前后会发生变化。如果再有这两个correction发生，gtsam优化时也还会考虑这两个correction。
+        //如果当前帧不是关键帧，saveKeyFramesAndFactor()直接就return掉，没有优化，transformTobeMapped没有发生变化。
     }
 
     float constraintTransformation(float value, float limit)
@@ -1585,6 +1596,7 @@ public:
         laserOdometryROS.pose.pose.position.z = transformTobeMapped[5];
         laserOdometryROS.pose.pose.orientation = tf::createQuaternionMsgFromRollPitchYaw(transformTobeMapped[0], transformTobeMapped[1], transformTobeMapped[2]);
         pubLaserOdometryGlobal.publish(laserOdometryROS);
+
         // Publish TF
         static tf::TransformBroadcaster br;
         tf::Transform t_odom_to_lidar = tf::Transform(tf::createQuaternionFromRPY(transformTobeMapped[0], transformTobeMapped[1], transformTobeMapped[2]),
@@ -1606,7 +1618,7 @@ public:
             increOdomAffine = increOdomAffine * affineIncre;
             float x, y, z, roll, pitch, yaw;
             pcl::getTranslationAndEulerAngles (increOdomAffine, x, y, z, roll, pitch, yaw);
-            if (cloudInfo.imuAvailable == true)
+            if (cloudInfo.imuAvailable == true) //一直为true
             {
                 if (std::abs(cloudInfo.imuPitchInit) < 1.4)
                 {

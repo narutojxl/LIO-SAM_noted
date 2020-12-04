@@ -91,7 +91,7 @@ public:
     {
         subImu        = nh.subscribe<sensor_msgs::Imu>(imuTopic, 2000, &ImageProjection::imuHandler, this, ros::TransportHints().tcpNoDelay());
         subOdom       = nh.subscribe<nav_msgs::Odometry>(odomTopic+"_incremental", 2000, &ImageProjection::odometryHandler, this, ros::TransportHints().tcpNoDelay()); 
-        //imuPreintegration模块发布：imu在gtsam上一帧结果上每来一次imu mea预测得到的位姿，频率与imu一样！
+        //imuPreintegration模块发布：imu在上一帧laser的结果上(local gtsam 优化后的结果),每来一次imu mea预测得到的位姿，频率与imu一样！
 
         subLaserCloud = nh.subscribe<sensor_msgs::PointCloud2>(pointCloudTopic, 5, &ImageProjection::cloudHandler, this, ros::TransportHints().tcpNoDelay());
 
@@ -173,7 +173,7 @@ public:
     {
         std::lock_guard<std::mutex> lock2(odoLock);
         odomQueue.push_back(*odometryMsg); 
-        //imuPreintegration模块发布：在gtsam得到的上一帧PVQBaBg基础上，每来一次imu做一次预测。这样每个imu mea都会有一个位姿，该topic频率和imu的频率一致！
+        //imuPreintegration模块发布：在gtsam得到的上一帧laser PVQBaBg基础上，每来一次imu做一次预测。这样每个imu mea都会有一个位姿，该topic频率和imu的频率一致！
     }
     
     //每一帧laser回调函数
