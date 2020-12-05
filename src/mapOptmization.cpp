@@ -167,7 +167,8 @@ public:
         pubPath = nh.advertise<nav_msgs::Path>("lio_sam/mapping/path", 1); //所有关键帧在map下的轨迹(位姿pose)
 
         subCloud = nh.subscribe<lio_sam::cloud_info>("lio_sam/feature/cloud_info", 1, &mapOptimization::laserCloudInfoHandler, this, ros::TransportHints().tcpNoDelay());
-        
+        //每一帧点云
+
         subGPS   = nh.subscribe<nav_msgs::Odometry> (gpsTopic, 200, &mapOptimization::gpsHandler, this, ros::TransportHints().tcpNoDelay());
         subLoop  = nh.subscribe<std_msgs::Float64MultiArray>("lio_loop/loop_closure_detection", 1, &mapOptimization::loopInfoHandler, this, ros::TransportHints().tcpNoDelay());
         //GNSS模块发布
@@ -744,9 +745,11 @@ public:
     void updateInitialGuess()
     {
         // save current transformation before any processing
-        incrementalOdometryAffineFront = trans2Affine3f(transformTobeMapped); //在初值的基础上，上一帧与local map refine后的结果
+        incrementalOdometryAffineFront = trans2Affine3f(transformTobeMapped); 
+        //此时transformTobeMapped是上一帧在map下的位姿。上一帧如果是个关键帧，则经过了gtsam优化；如果不是个关键帧，则只是与local map匹配后的结果
 
         static Eigen::Affine3f lastImuTransformation;
+
         // initialization
         if (cloudKeyPoses3D->points.empty())
         {
@@ -757,7 +760,8 @@ public:
             if (!useImuHeadingInitialization)
                 transformTobeMapped[2] = 0;
 
-            lastImuTransformation = pcl::getTransformation(0, 0, 0, cloudInfo.imuRollInit, cloudInfo.imuPitchInit, cloudInfo.imuYawInit); // save imu before return;
+            // save imu before return;
+            lastImuTransformation = pcl::getTransformation(0, 0, 0, cloudInfo.imuRollInit, cloudInfo.imuPitchInit, cloudInfo.imuYawInit); 
             return;
         }
         
@@ -787,7 +791,7 @@ public:
         }
 
         // use imu incremental estimation for pose guess (only rotation)
-        if (cloudInfo.imuAvailable == true) //等价于cloudInfo.odomAvailable == false
+        if (cloudInfo.imuAvailable == true) 
         {
             Eigen::Affine3f transBack = pcl::getTransformation(0, 0, 0, cloudInfo.imuRollInit, cloudInfo.imuPitchInit, cloudInfo.imuYawInit);
             Eigen::Affine3f transIncre = lastImuTransformation.inverse() * transBack;
@@ -1296,9 +1300,9 @@ public:
 
         incrementalOdometryAffineBack = trans2Affine3f(transformTobeMapped);
         //因为该函数是在scan2MapOptimization()里调用的，这个位姿仅仅是当前帧与local map匹配后的结果。
-        //如果当前帧为关键帧，saveKeyFramesAndFactor()里会调用gtsam对所有的位姿进行优化，即使没有loop, gps correction发生。
+        //如果当前帧为关键帧，saveKeyFramesAndFactor()里会调用gtsam对所有的关键帧进行优化，即使没有loop, gps correction发生。
         //这样的话，transformTobeMapped在优化前后会发生变化。如果再有这两个correction发生，gtsam优化时也还会考虑这两个correction。
-        //如果当前帧不是关键帧，saveKeyFramesAndFactor()直接就return掉，没有优化，transformTobeMapped没有发生变化。
+        //如果当前帧不是关键帧，saveKeyFramesAndFactor()直接就return掉，没有优化，transformTobeMapped依然是当前帧与local map匹配后的结果。
     }
 
     float constraintTransformation(float value, float limit)

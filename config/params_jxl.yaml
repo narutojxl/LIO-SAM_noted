@@ -43,7 +43,7 @@ lio_sam:
   imuGyrNoise: 1.1e-03
   imuAccBiasN: 1.96e-03
   imuGyrBiasN: 6.6e-05
-  imuGravity: 9.80511
+  imuGravity: 9.80511  #ENU：9.8;  NED：-9.8
   imuRPYWeight: 0.01
 
 
