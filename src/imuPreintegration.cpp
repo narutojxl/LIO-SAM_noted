@@ -639,8 +639,10 @@ public:
         odometry.twist.twist.linear.x = currentState.velocity().x();
         odometry.twist.twist.linear.y = currentState.velocity().y();
         odometry.twist.twist.linear.z = currentState.velocity().z();
-
-        odometry.twist.twist.angular.x = thisImu.angular_velocity.x + prevBiasOdom.gyroscope().x();
+        
+        //prevBiasOdom.correctAccelerometer()和prevBiasOdom.correctGyroscope()都是减去当前的bias估计值
+        //作者这是加
+        odometry.twist.twist.angular.x = thisImu.angular_velocity.x + prevBiasOdom.gyroscope().x(); 
         odometry.twist.twist.angular.y = thisImu.angular_velocity.y + prevBiasOdom.gyroscope().y();
         odometry.twist.twist.angular.z = thisImu.angular_velocity.z + prevBiasOdom.gyroscope().z();
         pubImuOdometry.publish(odometry);       

@@ -128,7 +128,7 @@ public:
     std::mutex mtxLoopInfo;
 
     bool isDegenerate = false;
-    Eigen::Matrix<float, 6, 6> matP;
+    cv::Mat matP;
 
     int laserCloudCornerFromMapDSNum = 0;
     int laserCloudSurfFromMapDSNum = 0;
@@ -229,7 +229,7 @@ public:
             transformTobeMapped[i] = 0;
         }
 
-        matP.setZero();
+        matP = cv::Mat(6, 6, CV_32F, cv::Scalar::all(0));
     }
     
     //每一帧laser的回调函数，频率10hz
@@ -682,6 +682,9 @@ public:
 
     void visualizeLoopClosure()
     {
+        if (loopIndexContainer.empty())
+            return;
+        
         visualization_msgs::MarkerArray markerArray;
         // loop nodes
         visualization_msgs::Marker markerNode;
@@ -704,7 +707,7 @@ public:
         markerEdge.ns = "loop_edges";
         markerEdge.id = 1;
         markerEdge.pose.orientation.w = 1;
-        markerEdge.scale.x = 0.1; markerEdge.scale.y = 0.1; markerEdge.scale.z = 0.1;
+        markerEdge.scale.x = 0.1;
         markerEdge.color.r = 0.9; markerEdge.color.g = 0.9; markerEdge.color.b = 0;
         markerEdge.color.a = 1;
 
@@ -1142,7 +1145,6 @@ public:
         cv::Mat matB(laserCloudSelNum, 1, CV_32F, cv::Scalar::all(0));
         cv::Mat matAtB(6, 1, CV_32F, cv::Scalar::all(0));
         cv::Mat matX(6, 1, CV_32F, cv::Scalar::all(0));
-        cv::Mat matP(6, 6, CV_32F, cv::Scalar::all(0));
 
         PointType pointOri, coeff;
 
