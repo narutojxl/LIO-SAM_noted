@@ -107,22 +107,22 @@ The user needs to prepare the point cloud data in the correct format for cloud d
 ## Sample datasets
 
   * Download some sample datasets to test the functionality of the package. The datasets below is configured to run using the default settings:
-    - **Walking dataset:** [[Google Drive](https://drive.google.com/file/d/1HN5fYPXEHbDq0E5JtbQPkCHIHUoTFFnN/view?usp=sharing)][[Dropbox](https://www.dropbox.com/s/jzql78speb1jbcc/casual_walk.bag.zip?dl=0)]
-    - **Park dataset:** [[Google Drive](https://drive.google.com/file/d/19PZieaJaVkXDs2ZromaHTxYoq0zkiHae/view?usp=sharing)][[Dropbox](https://www.dropbox.com/s/fnuxpdc4f9yyb55/park.bag.zip?dl=0)]
-    - **Garden dataset:** [[Google Drive](https://drive.google.com/file/d/1q6yuVhyJbkUBhut9yhfox2WdV4VZ9BZX/view?usp=sharing)]
+    - **Walking dataset:** [[Google Drive](https://drive.google.com/drive/folders/1gJHwfdHCRdjP7vuT556pv8atqrCJPbUq?usp=sharing)]
+    - **Park dataset:** [[Google Drive](https://drive.google.com/drive/folders/1gJHwfdHCRdjP7vuT556pv8atqrCJPbUq?usp=sharing)]
+    - **Garden dataset:** [[Google Drive](https://drive.google.com/drive/folders/1gJHwfdHCRdjP7vuT556pv8atqrCJPbUq?usp=sharing)]
 
   * The datasets below need the parameters to be configured. In these datasets, the point cloud topic is "points_raw." The IMU topic is "imu_correct," which gives the IMU data in ROS REP105 standard. Because no IMU transformation is needed for this dataset, the following configurations need to be changed to run this dataset successfully:
     - The "imuTopic" parameter in "config/params.yaml" needs to be set to "imu_correct".
     - The "extrinsicRot" and "extrinsicRPY" in "config/params.yaml" needs to be set as identity matrices.
-      - **Rotation dataset:** [[Google Drive](https://drive.google.com/file/d/1V4ijY4PgLdjKmdzcQ18Xu7VdcHo2UaWI/view?usp=sharing)][[Dropbox](https://www.dropbox.com/s/xdwzjnqwr7x19cl/rotation.bag.zip?dl=0)]
-      - **Campus dataset (large):** [[Google Drive](https://drive.google.com/file/d/1q4Sf7s2veVc7bs08Qeha3stOiwsytopL/view?usp=sharing)][[Dropbox](https://www.dropbox.com/s/etgnfg39ha79b7a/big_loop.bag.zip?dl=0)]
-      - **Campus dataset (small):** [[Google Drive](https://drive.google.com/file/d/1_V-cFMTQ4RO-_16mU9YPUE8ozsPeddCv/view?usp=sharing)][[Dropbox](https://www.dropbox.com/s/33u6epkfu36i1fd/west.bag.zip?dl=0)]
+      - **Rotation dataset:** [[Google Drive](https://drive.google.com/drive/folders/1gJHwfdHCRdjP7vuT556pv8atqrCJPbUq?usp=sharing)]
+      - **Campus dataset (large):** [[Google Drive](https://drive.google.com/drive/folders/1gJHwfdHCRdjP7vuT556pv8atqrCJPbUq?usp=sharing)]
+      - **Campus dataset (small):** [[Google Drive](https://drive.google.com/drive/folders/1gJHwfdHCRdjP7vuT556pv8atqrCJPbUq?usp=sharing)]
       
   * Ouster (OS1-128) dataset. No extrinsics need to be changed for this dataset if you are using the default settings. Please follow the Ouster notes below to configure the package to run with Ouster data. A video of the dataset can be found on [YouTube](https://youtu.be/O7fKgZQzkEo):
-    - **Rooftop dataset:** [[Google Drive](https://drive.google.com/file/d/1Qy2rZdPudFhDbATPpblioBb8fRtjDGQj/view?usp=sharing)]
+    - **Rooftop dataset:** [[Google Drive](https://drive.google.com/drive/folders/1gJHwfdHCRdjP7vuT556pv8atqrCJPbUq?usp=sharing)]
 
   * KITTI dataset. The extrinsics can be found in the Notes KITTI section below. To generate more bags using other KITTI raw data, you can use the python script provided in "config/doc/kitti2bag".
-    - **2011_09_30_drive_0028:** [[Google Drive](https://drive.google.com/file/d/12h3ooRAZVTjoMrf3uv1_KriEXm33kHc7/view?usp=sharing)]
+    - **2011_09_30_drive_0028:** [[Google Drive](https://drive.google.com/drive/folders/1gJHwfdHCRdjP7vuT556pv8atqrCJPbUq?usp=sharing)]
 
 ## Run the package
 
@@ -179,6 +179,17 @@ rosbag play your-bag.bag -r 3
     <img src="./config/doc/ouster-demo.gif" alt="drawing" width="300"/>
 </p>
 
+## Service
+  - /lio_sam/save_map
+    - save map as a PCD file.
+      ``` bash
+        rosservice call [service] [resolution] [destination]
+      ```
+      - Example:
+      ``` bash
+        $ rosservice call /lio_sam/save_map 0.2 "/Downloads/LOAM/"
+      ```
+
 ## Issues
 
   - **Zigzag or jerking behavior**: if your lidar and IMU data formats are consistent with the requirement of LIO-SAM, this problem is likely caused by un-synced timestamp of lidar and IMU data.
@@ -186,6 +197,8 @@ rosbag play your-bag.bag -r 3
   - **Jumpping up and down**: if you start testing your bag file and the base_link starts to jump up and down immediately, it is likely your IMU extrinsics are wrong. For example, the gravity acceleration has negative value.
 
   - **mapOptimization crash**: it is usually caused by GTSAM. Please install the GTSAM specified in the README.md. More similar issues can be found [here](https://github.com/TixiaoShan/LIO-SAM/issues).
+
+  - **gps odometry unavailable**: it is generally caused due to unavailable transform between message frame_ids and robot frame_id (for example: transform should be available from "imu_frame_id" and "gps_frame_id" to "base_link" frame. Please read the Robot Localization documentation found [here](http://docs.ros.org/en/melodic/api/robot_localization/html/preparing_sensor_data.html).
 
 ## Paper 
 
@@ -219,6 +232,7 @@ Part of the code is adapted from [LeGO-LOAM](https://github.com/RobustFieldAuton
 
 ## Related Package
 
+  - [Lidar-IMU calibration](https://github.com/chennuo0125-HIT/lidar_imu_calib)
   - [LIO-SAM with ROS2](https://github.com/CAKGOD/lio_sam_ros2)
   - [LIO-SAM with Scan Context](https://github.com/gisbi-kim/SC-LIO-SAM)
 

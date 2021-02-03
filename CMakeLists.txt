@@ -18,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
   message_generation
+  visualization_msgs
 )
 
 find_package(OpenMP REQUIRED)
@@ -29,6 +30,12 @@ add_message_files(
   DIRECTORY msg
   FILES
   cloud_info.msg
+)
+
+add_service_files(
+  DIRECTORY srv
+  FILES
+  save_map.srv
 )
 
 generate_messages(
@@ -50,6 +57,7 @@ catkin_package(
   sensor_msgs
   message_runtime 
   message_generation
+  visualization_msgs
 )
 
 # include directories
